@@ -1,6 +1,6 @@
 #include "stella_vslam/data/dense_point.h"
 #include "stella_vslam/data/map_database.h"
-#include "stella_vslam/io/point_cloud_io_ply.h"
+#include "stella_vslam/io/point_cloud_io_ply_ascii.h"
 
 #include <spdlog/spdlog.h>
 
@@ -9,7 +9,7 @@
 namespace stella_vslam {
 namespace io {
 
-bool point_cloud_io_ply::save(const std::string& path,
+bool point_cloud_io_ply_ascii::save(const std::string& path,
                                    const data::map_database* const map_db) {
     std::lock_guard<std::mutex> lock(data::map_database::mtx_database_);
 

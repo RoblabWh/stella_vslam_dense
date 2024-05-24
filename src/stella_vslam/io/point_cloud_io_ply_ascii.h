@@ -1,5 +1,5 @@
-#ifndef STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_H
-#define STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_H
+#ifndef STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_ASCII_H
+#define STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_ASCII_H
 
 #include "stella_vslam/io/point_cloud_io_base.h"
 
@@ -13,17 +13,17 @@ class map_database;
 
 namespace io {
 
-class point_cloud_io_ply : public point_cloud_io_base {
+class point_cloud_io_ply_ascii : public point_cloud_io_base {
 public:
     /**
      * Constructor
      */
-    point_cloud_io_ply() = default;
+    point_cloud_io_ply_ascii() = default;
 
     /**
      * Destructor
      */
-    virtual ~point_cloud_io_ply() = default;
+    virtual ~point_cloud_io_ply_ascii() = default;
 
     /**
      * Save the point cloud as PLY
@@ -35,4 +35,4 @@ public:
 } // namespace io
 } // namespace stella_vslam
 
-#endif // STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_H
+#endif // STELLA_VSLAM_IO_POINT_CLOUD_IO_PLY_ASCII_H

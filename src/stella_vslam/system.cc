@@ -64,7 +64,7 @@ system::system(const std::shared_ptr<config>& cfg, const std::string& vocab_file
     map_database_io_ = io::map_database_io_factory::create(map_format);
 
     // point cloud I/O
-    auto point_cloud_format = system_params["point_cloud_format"].as<std::string>("ply");
+    auto point_cloud_format = system_params["point_cloud_format"].as<std::string>("ply_ascii");
     point_cloud_io_ = io::point_cloud_io_factory::create(point_cloud_format);
 
     // point cloud I/O
