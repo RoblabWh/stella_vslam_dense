@@ -287,12 +287,9 @@ RUN set -x && \
     cd TiR360_Viewer_CPU && \
     cmake -B build . && \
     cmake --build build && \
-    cd build && \
-    mv ./insta360_stitcher.cpython-310-x86_64-linux-gnu.so ./insta360_stitcher.so && \
-    mv ./insta360_stitcher.so ../ && \
-    cd .. && \
-    mv ./insta360_stitcher.so ../
-  
+    cmake --install build
+ENV PYTHONPATH="/usr/local/lib"
+
 #install python
 RUN apt update && \
     apt install -y  python3 python3-pip exiftool ffmpeg libsm6 libxext6 && \

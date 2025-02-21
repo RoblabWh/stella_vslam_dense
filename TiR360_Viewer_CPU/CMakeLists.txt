@@ -40,8 +40,5 @@ target_link_libraries(insta360_stitcher
   yaml-cpp
 )
 
-# install(TARGETS
-# insta360_stitcher
-#   ARCHIVE DESTINATION lib
-#   LIBRARY DESTINATION lib
-#   RUNTIME DESTINATION bin)
+install(TARGETS insta360_stitcher)
+
