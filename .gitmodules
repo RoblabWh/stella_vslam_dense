@@ -4,3 +4,6 @@
 [submodule "3rd/tinycolormap"]
 	path = 3rd/tinycolormap
 	url = https://github.com/yuki-koyama/tinycolormap.git
+[submodule "3rd/patch_match_dense"]
+	path = 3rd/patch_match_dense
+	url = https://github.com/RoblabWh/patch_match_dense.git

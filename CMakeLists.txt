@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.1)
-project(stella_vslam LANGUAGES CXX C)
+cmake_minimum_required(VERSION 3.12)
+project(stella_vslam LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,10 +67,7 @@ if(MSVC)
     add_link_options(/NODEFAULTLIB:library)
 else()
     add_compile_options(-Wall -Wextra)
-    add_compile_options(
-        "$<$<CONFIG:Debug>:-Og>"
-        "$<$<CONFIG:Release>:-O3>"
-        "$<$<CONFIG:None>:-O3>")
+    set(CMAKE_CXX_FLAGS_DEBUG "-Og ${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 
 set(BUILD_WITH_MARCH_NATIVE OFF CACHE BOOL "Enable architecture-aware optimization")

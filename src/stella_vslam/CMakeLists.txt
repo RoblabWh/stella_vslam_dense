@@ -27,7 +27,7 @@ find_package(g2o REQUIRED
              g2o::csparse)
 
 # PatchMatchDense
-find_package(PatchMatchDense REQUIRED)
+add_subdirectory(${PROJECT_SOURCE_DIR}/3rd/patch_match_dense ${PROJECT_BINARY_DIR}/3rd/patch_match_dense)
 
 # gtsam
 set(USE_GTSAM ON CACHE BOOL "Enable gtsam")
