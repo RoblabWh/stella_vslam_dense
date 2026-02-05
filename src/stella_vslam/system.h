@@ -133,6 +133,16 @@ public:
     //! Enable temporal mapping
     void enable_temporal_mapping();
 
+    //! Enable the dense module
+    void enable_dense_module();
+
+    //! Disable the dense module
+    void disable_dense_module();
+
+    //! The dense module is enabled or not
+    bool dense_module_is_enabled() const;
+
+
     //-----------------------------------------
     // data feeding methods
 
@@ -293,6 +303,9 @@ private:
 
     //! mutex for flags of enable/disable loop detector
     mutable std::mutex mtx_loop_detector_;
+
+    //! mutex for flags of enable/disable loop detector
+    mutable std::mutex mtx_dense_;
 
     //! Temporary variables for visualization
     std::vector<cv::KeyPoint> keypts_;

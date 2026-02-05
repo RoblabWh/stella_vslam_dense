@@ -67,8 +67,10 @@ dense_module::dense_module(const YAML::Node& yaml_node, camera::base* camera, da
 dense_module::~dense_module() {
     spdlog::debug("DESTRUCT: dense_module");
 
-    delete patch_match_;
-    patch_match_ = nullptr;
+    if (patch_match_) {
+        delete patch_match_;
+        patch_match_ = nullptr;
+    }
 }
 
 void dense_module::run() {
@@ -252,7 +254,9 @@ bool dense_module::reset_is_requested() const {
 void dense_module::reset() {
     std::lock_guard<std::mutex> lock(mtx_reset_);
     spdlog::info("reset dense module");
-    patch_match_->reset();
+    if (patch_match_) {
+        patch_match_->reset();
+    }
     keyfrms_queue_.clear();
     {
         std::lock_guard<std::mutex> lock_keyfrm_queue(mtx_keyfrm_queue_);

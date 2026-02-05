@@ -317,6 +317,30 @@ void system::enable_temporal_mapping() {
     map_db_->set_fixed_keyframe_id_threshold();
 }
 
+void system::enable_dense_module() {
+    std::lock_guard<std::mutex> lock(mtx_dense_);
+    if (!system_is_running_) {
+        spdlog::critical("please call system::enable_dense_module() after system::startup()");
+    }
+    // resume the dense module
+    dense_->resume();
+}
+
+void system::disable_dense_module() {
+    std::lock_guard<std::mutex> lock(mtx_dense_);
+    if (!system_is_running_) {
+        spdlog::critical("please call system::disable_dense_module() after system::startup()");
+    }
+    // pause the dense module
+    auto future_pause = dense_->async_pause();
+    // wait until it stops
+    future_pause.get();
+}
+
+bool system::dense_module_is_enabled() const {
+    return !dense_->is_paused();
+}
+
 data::frame system::create_monocular_frame(const cv::Mat& img, const double timestamp, const cv::Mat& mask) {
     // color conversion
     if (!camera_->is_valid_shape(img)) {
@@ -495,7 +519,7 @@ std::shared_ptr<Mat44_t> system::feed_monocular_frame(const cv::Mat& img, const 
             }
             else if (log_img_resizing) {
                 log_img_resizing = false;
-                spdlog::info("resizing input images");
+                spdlog::warn("resizing input images");
             }
             else {
                 spdlog::trace("resizing input image");
