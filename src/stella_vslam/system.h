@@ -12,6 +12,7 @@
 #include <memory>
 
 #include <opencv2/core/mat.hpp>
+#include <spdlog/logger.h>
 
 namespace stella_vslam {
 
@@ -60,6 +61,9 @@ public:
 
     //! Destructor
     ~system();
+
+    //! Get logger
+    static std::shared_ptr<spdlog::logger> get_logger();
 
     //-----------------------------------------
     // system startup and shutdown

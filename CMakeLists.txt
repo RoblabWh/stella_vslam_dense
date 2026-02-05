@@ -26,6 +26,8 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(BUILD_SHARED_LIBS "Build stella_vslam as a shared library" ON)
 
+option(BUILD_PYBINDS "Build Python bindings using pybind11" ON)
+
 # ----- Build selection -----
 
 set(INSTALL_PANGOLIN_VIEWER OFF CACHE BOOL "Install PangolinViewer library")

@@ -156,6 +156,10 @@ system::~system() {
     spdlog::debug("DESTRUCT: system");
 }
 
+std::shared_ptr<spdlog::logger> system::get_logger() {
+    return spdlog::default_logger();
+}
+
 void system::print_info() {
     std::ostringstream message_stream;
 

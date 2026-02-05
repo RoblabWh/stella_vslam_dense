@@ -1,0 +1,378 @@
+#include <Eigen/Dense>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include "stella_vslam/system.h"
+#include "stella_vslam/config.h"
+#include "stella_vslam/publish/frame_publisher.h"
+#include "stella_vslam/publish/map_publisher.h"
+#include "stella_vslam/data/keyframe.h"
+#include "stella_vslam/data/landmark.h"
+#include "stella_vslam/data/dense_point.h"
+
+namespace py = pybind11;
+
+template<typename T>
+using ndarray = py::array_t<T, py::array::c_style | py::array::forcecast>;
+using PyImage = ndarray<uint8_t>;
+using PyPoints = ndarray<float>;
+using PyPose = std::tuple<ndarray<float>, ndarray<float>>; // position, orientation
+
+namespace stella_vslam {
+
+class StellaVSLAM {
+public:
+    StellaVSLAM(const std::string& config_file_path, const std::string& vocab_file_path, const std::string& log_level = "info") {
+        system::get_logger()->set_level(spdlog::level::from_str(log_level));
+        auto cfg = std::make_shared<config>(config_file_path);
+
+        system_ = std::make_unique<system>(cfg, vocab_file_path);
+        frame_publisher_ = system_->get_frame_publisher();
+        map_publisher_ = system_->get_map_publisher();
+    }
+
+    // System API
+
+    void startup(bool need_initialize = true) {
+        system_->startup(need_initialize);
+    }
+    void shutdown() {
+        system_->shutdown();
+    }
+    void pause() {
+        system_->pause_tracker();
+    }
+    bool is_paused() const {
+        return system_->tracker_is_paused();
+    }
+    void unpause() {
+        system_->resume_tracker();
+    }
+    void reset() {
+        system_->request_reset();
+    }
+    bool reset_is_requested() const {
+        return system_->reset_is_requested();
+    }
+    void terminate() {
+        system_->request_terminate();
+    }
+    bool terminate_is_requested() const {
+        return system_->terminate_is_requested();
+    }
+
+    void enable_mapping() {
+        system_->enable_mapping_module();
+    }
+    void disable_mapping() {
+        system_->disable_mapping_module();
+    }
+    bool mapping_is_enabled() const {
+        return system_->mapping_module_is_enabled();
+    }
+    void enable_temporal_mapping() {
+        system_->enable_temporal_mapping();
+    }
+    void enable_dense_reconstruction() {
+        system_->enable_dense_module();
+    }
+    void disable_dense_reconstruction() {
+        system_->disable_dense_module();
+    }
+    bool dense_reconstruction_is_enabled() const {
+        return system_->dense_module_is_enabled();
+    }
+    void enable_loop_detection() {
+        system_->enable_loop_detector();
+    }
+    void disable_loop_detection() {
+        system_->disable_loop_detector();
+    }
+    bool loop_detection_is_enabled() const {
+        return system_->loop_detector_is_enabled();
+    }
+    bool loop_ba_is_running() const {
+        return system_->loop_BA_is_running();
+    }
+    void request_loop_closure(int keyfrm1_id, int keyfrm2_id) {
+        system_->request_loop_closure(keyfrm1_id, keyfrm2_id);
+    }
+
+    bool load_map_database(const std::string& path) {
+        return system_->load_map_database(path);
+    }
+    bool save_map_database(const std::string& path) {
+        return system_->save_map_database(path);
+    }
+    bool save_point_cloud(const std::string& path) {
+        return system_->save_point_cloud(path);
+    }
+    bool save_keyframes(const std::string& path) {
+        return system_->save_keyframes(path);
+    }
+    void save_frame_trajectory(const std::string& path, const std::string& format) {
+        system_->save_frame_trajectory(path, format);
+    }
+    void save_keyframe_trajectory(const std::string& path, const std::string& format) {
+        system_->save_keyframe_trajectory(path, format);
+    }
+
+    bool relocalize_by_pose(const PyPose& cam_pose_wc) {
+        return system_->relocalize_by_pose(tuple_to_homogeneous(cam_pose_wc));
+    }
+    bool relocalize_by_pose_2d(const PyPose& cam_pose_wc, const ndarray<float>& normal_vector) {
+        const auto normal_vec = Eigen::Vector3f(*reinterpret_cast<const Eigen::Vector3f*>(normal_vector.data())).cast<double>();
+        return system_->relocalize_by_pose_2d(tuple_to_homogeneous(cam_pose_wc), normal_vec);
+    }
+
+    PyPose feed_monocular_frame(PyImage img, double timestamp, PyImage mask = PyImage()) {
+        const auto img_ = cv::Mat(img.shape(0), img.shape(1), CV_8UC(img.shape(2)), img.mutable_data());
+        return feed_frame([&](const auto& mask_) { return system_->feed_monocular_frame(img_, timestamp, mask_); }, mask);
+    }
+    PyPose feed_stereo_frame(PyImage left_img, PyImage right_img, double timestamp, PyImage mask = PyImage()) {
+        const auto left_img_ = cv::Mat(left_img.shape(0), left_img.shape(1), CV_8UC(left_img.shape(2)), left_img.mutable_data());
+        const auto right_img_ = cv::Mat(right_img.shape(0), right_img.shape(1), CV_8UC(right_img.shape(2)), right_img.mutable_data());
+        return feed_frame([&](const auto& mask_) { return system_->feed_stereo_frame(left_img_, right_img_, timestamp, mask_); }, mask);
+    }
+    PyPose feed_rgbd_frame(PyImage rgb_img, ndarray<float> depthmap, double timestamp, PyImage mask = PyImage()) {
+        const auto rgb_img_ = cv::Mat(rgb_img.shape(0), rgb_img.shape(1), CV_8UC(rgb_img.shape(2)), rgb_img.mutable_data());
+        const auto depthmap_ = cv::Mat(depthmap.shape(0), depthmap.shape(1), CV_32FC1, depthmap.mutable_data());
+        return feed_frame([&](const auto& mask_) { return system_->feed_RGBD_frame(rgb_img_, depthmap_, timestamp, mask_); }, mask);
+    }
+
+    // Frame Publisher API
+
+    PyImage draw_frame() {
+        auto drawn_img = frame_publisher_->draw_frame();
+        auto np_img = PyImage({drawn_img.rows, drawn_img.cols, drawn_img.channels()});
+        auto cv_img = cv::Mat(drawn_img.size(), drawn_img.type(), np_img.mutable_data());
+        cv::cvtColor(drawn_img, cv_img, cv::COLOR_BGR2RGB);
+        return np_img;
+    }
+
+    // Map Publisher API
+
+    std::tuple<PyPoints, PyPoints> get_all_landmarks() {
+        std::vector<std::shared_ptr<data::landmark>> all_landmarks;
+        std::set<std::shared_ptr<data::landmark>> local_landmarks;
+        map_publisher_->get_landmarks(all_landmarks, local_landmarks);
+
+        auto all_points = landmarks_to_ndarray(all_landmarks);
+        auto local_points = landmarks_to_ndarray(local_landmarks);
+
+        return {all_points, local_points};
+    }
+
+    std::tuple<PyPoints, PyImage> get_dense_points() {
+        std::vector<std::shared_ptr<data::dense_point>> dense_points;
+        map_publisher_->get_dense_points(dense_points);
+
+        PyPoints np_points({dense_points.size(), 3UL});
+        auto points_ptr = reinterpret_cast<Eigen::Vector3f*>(np_points.mutable_data());
+
+        PyImage np_color({dense_points.size(), 3UL});
+        auto color_ptr = reinterpret_cast<Eigen::Matrix<uint8_t, 3, 1>*>(np_color.mutable_data());
+
+        for (const auto& pt : dense_points) {
+            if (pt) {
+                ndarray_append(points_ptr, pt, [](const auto& pt) { return pt->get_pos_in_world().template cast<float>(); });
+                ndarray_append(color_ptr, pt, [](const auto& pt) { return pt->get_color_in_rgb(); });
+            }
+        }
+
+        np_points.resize({points_ptr - reinterpret_cast<const Eigen::Vector3f*>(np_points.data()), 3L});
+        np_color.resize({color_ptr - reinterpret_cast<const Eigen::Matrix<uint8_t, 3, 1>*>(np_color.data()), 3L});
+        return {np_points, np_color};
+    }
+
+    std::tuple<std::map<uint32_t, PyPose>, ndarray<float>, ndarray<float>, ndarray<float>> get_keyframe_graph(const uint32_t min_shared_lms) {
+        std::vector<std::shared_ptr<data::keyframe>> all_keyframes;
+        map_publisher_->get_keyframes(all_keyframes);
+
+        auto keyframe_pose = std::map<uint32_t, PyPose>{};
+
+        const auto size_max = all_keyframes.size() * all_keyframes.size();
+
+        auto spanning_tree_edges = ndarray<float>({all_keyframes.size(), 2UL, 3UL});
+        auto spanning_tree_ptr = reinterpret_cast<Eigen::Vector3f*>(spanning_tree_edges.mutable_data());
+
+        auto loop_edges = ndarray<float>({size_max, 2UL, 3UL});
+        auto loop_ptr = reinterpret_cast<Eigen::Vector3f*>(loop_edges.mutable_data());
+
+        auto covisibility_edges = ndarray<float>({size_max, 2UL, 3UL});
+        auto covisibility_ptr = reinterpret_cast<Eigen::Vector3f*>(covisibility_edges.mutable_data());
+
+        for (const auto& kf : all_keyframes) {
+            if (!kf || kf->will_be_erased()) {
+                continue;
+            }
+
+            // get keyframe id
+            const auto kf_id = kf->id_;
+
+            // get keyframe pose
+            keyframe_pose[kf_id] = homogeneous_to_tuple(kf->get_pose_wc());
+            const auto kf_pos = kf->get_trans_wc().cast<float>().eval();
+
+            // get spanning tree edges
+            const auto spanning_parent = kf->graph_node_->get_spanning_parent();
+            if (spanning_parent) {
+                append_edge(spanning_tree_ptr, spanning_parent, kf_pos);
+            }
+
+            // get loop edges
+            const auto kf_loop_edges = kf->graph_node_->get_loop_edges();
+            for (const auto& loop_edge : kf_loop_edges) {
+                if (loop_edge && (loop_edge->id_ >= kf_id)) {
+                    append_edge(loop_ptr, loop_edge, kf_pos);
+                }
+            }
+
+            // get covisibility edges
+            const auto kf_covisibility_edges = kf->graph_node_->get_covisibilities_over_min_num_shared_lms(min_shared_lms);
+            for (const auto& covisibility_edge : kf_covisibility_edges) {
+                if (covisibility_edge && !covisibility_edge->will_be_erased() && (covisibility_edge->id_ >= kf_id)) {
+                    append_edge(covisibility_ptr, covisibility_edge, kf_pos);
+                }
+            }
+        }
+
+        // free unused memory
+        spanning_tree_edges.resize({(spanning_tree_ptr - reinterpret_cast<const Eigen::Vector3f*>(spanning_tree_edges.data())) / 2, 2L, 3L});
+        loop_edges.resize({(loop_ptr - reinterpret_cast<const Eigen::Vector3f*>(loop_edges.data())) / 2, 2L, 3L});
+        covisibility_edges.resize({(covisibility_ptr - reinterpret_cast<const Eigen::Vector3f*>(covisibility_edges.data())) / 2, 2L, 3L});
+        return {keyframe_pose, spanning_tree_edges, loop_edges, covisibility_edges};
+    }
+
+private:
+    std::unique_ptr<system> system_;
+    std::shared_ptr<publish::frame_publisher> frame_publisher_;
+    std::shared_ptr<publish::map_publisher> map_publisher_;
+
+    PyPose feed_frame(std::function<std::shared_ptr<Eigen::Matrix4d>(const cv::Mat&)> feed_method, PyImage mask) {
+        auto mask_ = cv::Mat();
+        if (mask.size() > 0) {
+            mask_ = cv::Mat(mask.shape(0), mask.shape(1), CV_8UC1, mask.mutable_data());
+        }
+
+        const auto pose = feed_method(mask_);
+        auto pose_in_world = Eigen::Matrix4d::Identity().eval();
+        if (pose) {
+            pose_in_world = *pose;
+        }
+        return homogeneous_to_tuple(pose_in_world);
+    }
+
+    // Conversion utilities
+
+    template<typename P, typename O, typename F>
+    static inline void ndarray_append(P& ptr, const O& obj, const F& getter) {
+        *ptr = getter(obj);
+        ++ptr;
+    }
+
+    static inline void append_edge(Eigen::Vector3f*& ptr, const std::shared_ptr<data::keyframe>& dst, const Eigen::Vector3f& src) {
+        ndarray_append(ptr, src, [](const auto& pos) { return pos; });
+        ndarray_append(ptr, dst, [](const auto& kf) { return kf->get_trans_wc().template cast<float>(); });
+    }
+
+    template<typename S>
+    static PyPoints landmarks_to_ndarray(const S& landmarks) {
+        PyPoints np_points({landmarks.size(), 3UL});
+        auto points_ptr = reinterpret_cast<Eigen::Vector3f*>(np_points.mutable_data());
+
+        for (const auto& lm : landmarks) {
+            if (lm) {
+                ndarray_append(points_ptr, lm, [](const auto& lm) { return lm->get_pos_in_world().template cast<float>(); });
+            }
+        }
+
+        np_points.resize({points_ptr - reinterpret_cast<const Eigen::Vector3f*>(np_points.data()), 3L});
+        return np_points;
+    }
+
+    static inline PyPose homogeneous_to_tuple(const Eigen::Matrix4d& pose) {
+        ndarray<float> np_position(3);
+        const auto position = pose.topRightCorner<3, 1>();
+        *reinterpret_cast<Eigen::Vector3f*>(np_position.mutable_data()) = position.cast<float>();
+
+        ndarray<float> np_orientation(4);
+        const auto orientation = Eigen::Quaterniond(pose.topLeftCorner<3, 3>());
+        *reinterpret_cast<Eigen::Vector4f*>(np_orientation.mutable_data()) = orientation.coeffs().cast<float>();
+
+        return {np_position, np_orientation};
+    }
+
+    static inline Eigen::Matrix4d tuple_to_homogeneous(const PyPose& pose) {
+        auto eigen_pose = Eigen::Matrix4d::Identity().eval();
+
+        const auto& position = std::get<0>(pose);
+        eigen_pose.topRightCorner<3, 1>() = reinterpret_cast<const Eigen::Vector3f*>(position.data())->cast<double>();
+
+        const auto& orientation = std::get<1>(pose);
+        auto quat = Eigen::Quaterniond(reinterpret_cast<const Eigen::Vector4f*>(orientation.data())->cast<double>());
+        eigen_pose.topLeftCorner<3, 3>() = quat.toRotationMatrix();
+
+        return eigen_pose;
+    }
+};
+} // namespace stella_vslam
+
+PYBIND11_MODULE(stellapy, m) {
+    m.doc() = "stella_vslam python bindings";
+
+    py::class_<stella_vslam::StellaVSLAM>(m, "StellaVSLAM")
+        .def(py::init<const std::string&, const std::string&, const std::string&>(),
+             py::arg("config_file_path"),
+             py::arg("vocab_file_path"),
+             py::arg("log_level") = "info")
+
+        .def("startup", &stella_vslam::StellaVSLAM::startup, py::arg("need_initialize") = true)
+        .def("shutdown", &stella_vslam::StellaVSLAM::shutdown)
+        .def("pause", &stella_vslam::StellaVSLAM::pause)
+        .def("is_paused", &stella_vslam::StellaVSLAM::is_paused)
+        .def("unpause", &stella_vslam::StellaVSLAM::unpause)
+        .def("reset", &stella_vslam::StellaVSLAM::reset)
+        .def("reset_is_requested", &stella_vslam::StellaVSLAM::reset_is_requested)
+        .def("terminate", &stella_vslam::StellaVSLAM::terminate)
+        .def("terminate_is_requested", &stella_vslam::StellaVSLAM::terminate_is_requested)
+
+        .def("enable_mapping", &stella_vslam::StellaVSLAM::enable_mapping)
+        .def("disable_mapping", &stella_vslam::StellaVSLAM::disable_mapping)
+        .def("mapping_is_enabled", &stella_vslam::StellaVSLAM::mapping_is_enabled)
+        .def("enable_temporal_mapping", &stella_vslam::StellaVSLAM::enable_temporal_mapping)
+        .def("enable_dense_reconstruction", &stella_vslam::StellaVSLAM::enable_dense_reconstruction)
+        .def("disable_dense_reconstruction", &stella_vslam::StellaVSLAM::disable_dense_reconstruction)
+        .def("dense_reconstruction_is_enabled", &stella_vslam::StellaVSLAM::dense_reconstruction_is_enabled)
+        .def("enable_loop_detection", &stella_vslam::StellaVSLAM::enable_loop_detection)
+        .def("disable_loop_detection", &stella_vslam::StellaVSLAM::disable_loop_detection)
+        .def("loop_detection_is_enabled", &stella_vslam::StellaVSLAM::loop_detection_is_enabled)
+        .def("loop_ba_is_running", &stella_vslam::StellaVSLAM::loop_ba_is_running)
+        .def("request_loop_closure", &stella_vslam::StellaVSLAM::request_loop_closure,
+             py::arg("keyfrm1_id"), py::arg("keyfrm2_id"))
+
+        .def("load_map_database", &stella_vslam::StellaVSLAM::load_map_database, py::arg("path"))
+        .def("save_map_database", &stella_vslam::StellaVSLAM::save_map_database, py::arg("path"))
+        .def("save_point_cloud", &stella_vslam::StellaVSLAM::save_point_cloud, py::arg("path"))
+        .def("save_keyframes", &stella_vslam::StellaVSLAM::save_keyframes, py::arg("path"))
+        .def("save_frame_trajectory", &stella_vslam::StellaVSLAM::save_frame_trajectory,
+             py::arg("path"), py::arg("format"))
+        .def("save_keyframe_trajectory", &stella_vslam::StellaVSLAM::save_keyframe_trajectory,
+             py::arg("path"), py::arg("format"))
+
+        .def("relocalize_by_pose", &stella_vslam::StellaVSLAM::relocalize_by_pose, py::arg("cam_pose_wc"))
+        .def("relocalize_by_pose_2d", &stella_vslam::StellaVSLAM::relocalize_by_pose_2d, py::arg("cam_pose_wc"), py::arg("normal_vector"))
+        .def("feed_monocular_frame", &stella_vslam::StellaVSLAM::feed_monocular_frame,
+             py::arg("img"), py::arg("timestamp"), py::arg("mask") = PyImage())
+        .def("feed_stereo_frame", &stella_vslam::StellaVSLAM::feed_stereo_frame,
+             py::arg("left_img"), py::arg("right_img"), py::arg("timestamp"), py::arg("mask") = PyImage())
+        .def("feed_rgbd_frame", &stella_vslam::StellaVSLAM::feed_rgbd_frame,
+             py::arg("rgb_img"), py::arg("depthmap"), py::arg("timestamp"), py::arg("mask") = PyImage())
+
+        .def("draw_frame", &stella_vslam::StellaVSLAM::draw_frame)
+        .def("get_all_landmarks", &stella_vslam::StellaVSLAM::get_all_landmarks)
+        .def("get_dense_points", &stella_vslam::StellaVSLAM::get_dense_points)
+        .def("get_keyframe_graph", &stella_vslam::StellaVSLAM::get_keyframe_graph, py::arg("min_shared_lms") = 100);
+}
