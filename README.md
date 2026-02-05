@@ -19,23 +19,23 @@ Innovate your UAV-based USAR missions with our real-time dense 3D reconstruction
 ```
 git clone --recursive https://github.com/RoblabWh/stella_vslam_dense.git
 cd stella_vslam_dense
-docker build -t stella_vslam_dense -f Dockerfile.socket . --build-arg NUM_THREADS=$(nproc)
+docker build -t stella_vslam_dense -f Dockerfile.viser .
 ```
 
 ## Running
 Start VSLAM container
 ```
-docker run -it --rm --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -p 3001:3001 --name=stella_vslam_dense -v ${HOST_DATA_PATH:?Set path to directory on the host system to keep input and output data.}:/data stella_vslam_dense
+docker run -it --rm --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 -p 8080:8080 --name=stella_vslam_dense -v ${HOST_DATA_PATH:?Set path to directory on the host system to keep input and output data.}:/data stella_vslam_dense
 ```
-Open the viewer in a browser: http://localhost:3001
+Open the viewer in a browser: http://localhost:8080
 
 Run VSLAM in container
 ```
-./run_video_slam -v /data/orb_vocab.fbow -c "/data/${PATH_TO_CONFIG:?}" -m "/data/${PATH_TO_VIDEO:?}" --mask "/data/${PATH_TO_MASK:?}"
+./run_video_slam.py -v /data/orb_vocab.fbow -c "/data/${PATH_TO_CONFIG:?}" -m "/data/${PATH_TO_VIDEO:?}" --mask "/data/${PATH_TO_MASK:?}"
 ```
 More options are available
 ```
-./run_video_slam -h
+./run_video_slam.py -h
 ```
 
 ### Running our examples
@@ -44,8 +44,6 @@ We present two illustrative examples to evaluate our method. The first utilizes 
 #### HD / Real time example
 Prepare dataset in container
 ```
-mkdir -p /data/example_inspection_flight_drz_keyframes_hd
-
 curl -L "https://github.com/stella-cv/FBoW_orb_vocab/raw/main/orb_vocab.fbow" -o /data/orb_vocab.fbow
 
 curl -u "dF2wQbFNW2zuCpK:fire" "https://w-hs.sciebo.de/public.php/webdav/stella_vslam_dense/example_inspection_flight_drz_hd.mp4" -o /data/example_inspection_flight_drz_hd.mp4
@@ -53,14 +51,12 @@ curl -u "dF2wQbFNW2zuCpK:fire" "https://w-hs.sciebo.de/public.php/webdav/stella_
 
 Run VSLAM in container
 ```
-./run_video_slam -v /data/orb_vocab.fbow -c /stella_vslam/example/dense/dense_hd.yaml -m /data/example_inspection_flight_drz_hd.mp4 --frame-skip 3 -o /data/example_inspection_flight_drz_hd.db -p /data/example_inspection_flight_drz_hd.ply -k /data/example_inspection_flight_drz_keyframes_hd/
+./run_video_slam.py -v /data/orb_vocab.fbow -c /stella/example/dense/dense_hd.yaml -m /data/example_inspection_flight_drz_hd.mp4 --frame-step 3 -o /data/example_inspection_flight_drz_hd.db -p /data/example_inspection_flight_drz_hd.ply -k /data/example_inspection_flight_drz_keyframes_hd/
 ```
 
 #### High quality example
 Prepare dataset in container
 ```
-mkdir -p /data/example_inspection_flight_drz_keyframes
-
 curl -L "https://github.com/stella-cv/FBoW_orb_vocab/raw/main/orb_vocab.fbow" -o /data/orb_vocab.fbow
 
 curl -u "dF2wQbFNW2zuCpK:fire" "https://w-hs.sciebo.de/public.php/webdav/stella_vslam_dense/example_inspection_flight_drz.mp4" -o /data/example_inspection_flight_drz.mp4
@@ -68,7 +64,7 @@ curl -u "dF2wQbFNW2zuCpK:fire" "https://w-hs.sciebo.de/public.php/webdav/stella_
 
 Run VSLAM in container
 ```
-./run_video_slam -v /data/orb_vocab.fbow -c /stella_vslam/example/dense/dense.yaml -m /data/example_inspection_flight_drz.mp4 --frame-skip 3 -o /data/example_inspection_flight_drz.db -p /data/example_inspection_flight_drz.ply -k /data/example_inspection_flight_drz_keyframes/
+./run_video_slam.py -v /data/orb_vocab.fbow -c /stella/example/dense/dense.yaml -m /data/example_inspection_flight_drz.mp4 --frame-step 3 -o /data/example_inspection_flight_drz.db -p /data/example_inspection_flight_drz.ply -k /data/example_inspection_flight_drz_keyframes/
 ```
 
 #### NeRF example
@@ -81,9 +77,9 @@ curl -u "dF2wQbFNW2zuCpK:fire" "https://w-hs.sciebo.de/public.php/webdav/stella_
 
 Run VSLAM and export script in container
 ```
-./run_video_slam -v /data/orb_vocab.fbow -c /stella_vslam/example/nerf/nerf.yaml -m /data/example_inspection_flight_drz.mp4 --frame-skip 10 -o /data/example_inspection_flight_drz_nerf.db --no-sleep --auto-term --viewer none
+./run_video_slam.py -v /data/orb_vocab.fbow -c /stella/example/nerf/nerf.yaml -m /data/example_inspection_flight_drz.mp4 --frame-step 10 -o /data/example_inspection_flight_drz_nerf.db --auto-term
 
-/stella_vslam/scripts/export_sqlite3_to_nerf.py /data/example_inspection_flight_drz_nerf.db /data/example_inspection_flight_drz_nerf/
+./export_sqlite3_to_nerfstudio.py /data/example_inspection_flight_drz_nerf.db /data/example_inspection_flight_drz_nerf/
 ```
 
 Run nerfstudio on the host or in another container
@@ -91,15 +87,15 @@ Run nerfstudio on the host or in another container
 ## Additional export scripts
 Exporting the project from sqlite3 for use with [nerfstudio](https://docs.nerf.studio/)
 ```
-/stella_vslam/scripts/export_sqlite3_to_nerf.py ${PATH_TO_DB:?} ${PATH_TO_OUTPUT:?}
+./export_sqlite3_to_nerfstudio.py ${PATH_TO_DB:?} ${PATH_TO_OUTPUT:?}
 ```
 Exporting the project from msgpack for use with [nerfstudio](https://docs.nerf.studio/)
 ```
-/stella_vslam/scripts/export_msgpack_to_nerf.py ${PATH_TO_MSG:?} ${PATH_TO_OUTPUT:?}
+./export_msgpack_to_nerf.py ${PATH_TO_MSG:?} ${PATH_TO_OUTPUT:?}
 ```
 Exporting point cloud from msgpack to ply
 ```
-/stella_vslam/scripts/export_dense_msg_to_ply.py -i ${PATH_TO_MSG:?} -o ${PATH_TO_PLY:?}
+./export_dense_msg_to_ply.py -i ${PATH_TO_MSG:?} -o ${PATH_TO_PLY:?}
 ```
 
 ## Citation of original PatchMatch integration for OpenVSLAM

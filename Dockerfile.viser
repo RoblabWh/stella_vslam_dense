@@ -7,6 +7,7 @@ RUN apt-get update --yes && \
     apt-get install --yes --no-install-recommends \
         # basic dependencies
         git \
+        curl \
         cmake \
         ninja-build \
         clang \
