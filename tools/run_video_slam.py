@@ -75,7 +75,7 @@ def main():
     covisibility_min_shared = server.gui.add_slider("Covisibility Minimum Shared Landmarks", 10, 500, 10, 100, hint="Minimum shared landmarks for covisibility edge")
     world_scale = server.gui.add_slider("World Scale", 0.01, 10.0, 0.1, 1.0, hint="Scale of the world visualization")
     pause = server.gui.add_button("Unpause" if args.start_paused else "Pause", hint="Pause/Resume the SLAM process")
-    step = server.gui.add_button("Step", hint="Process one frame when paused", disabled=True)
+    step = server.gui.add_button("Step", hint="Process one frame when paused", disabled=not args.start_paused)
     reset = server.gui.add_button("Reset SLAM", hint="Request a full reset of the SLAM system")
     terminate = server.gui.add_button("Terminate SLAM", hint="Request termination of the SLAM system")
 
@@ -163,7 +163,7 @@ def main():
     # Wire control variables
     paused = args.start_paused
     def toggle_pause(_):
-        global paused
+        nonlocal paused
         if paused:
             paused = False
             pause.label = "Pause"
@@ -175,7 +175,7 @@ def main():
     pause.on_click(toggle_pause)
     stepping = False
     def step_once(_):
-        global stepping
+        nonlocal stepping
         stepping = True
     step.on_click(step_once)
 
