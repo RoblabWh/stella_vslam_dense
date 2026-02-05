@@ -4,8 +4,10 @@ lib/
 dataset/
 vocab/
 .idea/
+.cache/
 cmake-build-debug/
 cmake-build-release/
+__pycache__/
 */.python-version
 *.user
 *~

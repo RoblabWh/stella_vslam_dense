@@ -3,6 +3,8 @@
 .git/
 .idea/
 .vscode/
+.cache/
+.venv/
 
 # not needed for building
 Dockerfile*
@@ -12,6 +14,7 @@ README.md
 wercker.yml
 docs/
 test/
+__pycache__/
 
 # build directory
 build/
