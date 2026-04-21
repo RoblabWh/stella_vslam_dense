@@ -131,17 +131,22 @@ public:
     }
 
     std::optional<PyPose> feed_monocular_frame(PyImage img, double timestamp, PyImage mask = PyImage()) {
-        const auto img_ = cv::Mat(img.shape(0), img.shape(1), CV_8UC(img.shape(2)), img.mutable_data()).clone();
+        const auto type = detect_cv_type(img);
+        const auto img_ = cv::Mat(img.shape(0), img.shape(1), type, img.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_monocular_frame(img_, timestamp, mask_); }, mask);
     }
     std::optional<PyPose> feed_stereo_frame(PyImage left_img, PyImage right_img, double timestamp, PyImage mask = PyImage()) {
-        const auto left_img_ = cv::Mat(left_img.shape(0), left_img.shape(1), CV_8UC(left_img.shape(2)), left_img.mutable_data()).clone();
-        const auto right_img_ = cv::Mat(right_img.shape(0), right_img.shape(1), CV_8UC(right_img.shape(2)), right_img.mutable_data()).clone();
+        const auto left_type = detect_cv_type(left_img);
+        const auto right_type = detect_cv_type(right_img);
+        const auto left_img_ = cv::Mat(left_img.shape(0), left_img.shape(1), left_type, left_img.mutable_data()).clone();
+        const auto right_img_ = cv::Mat(right_img.shape(0), right_img.shape(1), right_type, right_img.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_stereo_frame(left_img_, right_img_, timestamp, mask_); }, mask);
     }
     std::optional<PyPose> feed_rgbd_frame(PyImage rgb_img, ndarray<float> depthmap, double timestamp, PyImage mask = PyImage()) {
-        const auto rgb_img_ = cv::Mat(rgb_img.shape(0), rgb_img.shape(1), CV_8UC(rgb_img.shape(2)), rgb_img.mutable_data()).clone();
-        const auto depthmap_ = cv::Mat(depthmap.shape(0), depthmap.shape(1), CV_32FC1, depthmap.mutable_data()).clone();
+        const auto rgb_type = detect_cv_type(rgb_img);
+        const auto depthmap_type = detect_cv_type(depthmap);
+        const auto rgb_img_ = cv::Mat(rgb_img.shape(0), rgb_img.shape(1), rgb_type, rgb_img.mutable_data()).clone();
+        const auto depthmap_ = cv::Mat(depthmap.shape(0), depthmap.shape(1), depthmap_type, depthmap.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_RGBD_frame(rgb_img_, depthmap_, timestamp, mask_); }, mask);
     }
 
@@ -290,11 +295,27 @@ private:
     std::shared_ptr<publish::frame_publisher> frame_publisher_;
     std::shared_ptr<publish::map_publisher> map_publisher_;
 
+    template<typename T>
+    static inline int detect_cv_type(const ndarray<T>& img) {
+        constexpr int base_type = []() {
+            if constexpr (std::is_same_v<T, uint8_t>) return CV_8U;
+            else if constexpr (std::is_same_v<T, float>) return CV_32F;
+            else static_assert(!std::is_same_v<T, T>(), "detect_cv_type: unsupported element type");
+        }();
+
+        const auto np_dims = img.ndim();
+        if (np_dims < 2 || np_dims > 3) {
+            throw std::invalid_argument("image array must be 2D (H, W) or 3D (H, W, C > 1)");
+        }
+        return CV_MAKETYPE(base_type, np_dims == 2 ? 1 : img.shape(2));
+    }
+
     template<typename F>
     static inline std::optional<PyPose> feed_frame(F&& feed_method, PyImage mask) {
         auto mask_ = cv::Mat();
         if (mask.size() > 0) {
-            mask_ = cv::Mat(mask.shape(0), mask.shape(1), CV_8UC1, mask.mutable_data()).clone();
+            const auto type = detect_cv_type(mask);
+            mask_ = cv::Mat(mask.shape(0), mask.shape(1), type, mask.mutable_data()).clone();
         }
 
         std::shared_ptr<Eigen::Matrix4d> pose;

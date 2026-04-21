@@ -350,6 +350,14 @@ data::frame system::create_monocular_frame(const cv::Mat& img, const double time
     if (!camera_->is_valid_shape(img)) {
         spdlog::warn("preprocess: Input image size is invalid");
     }
+    if (!mask.empty()) {
+        if (!camera_->is_valid_shape(mask)) {
+            spdlog::warn("preprocess: Input mask size is invalid");
+        }
+        if (mask.type() != CV_8UC1) {
+            spdlog::warn("preprocess: Input mask type is invalid");
+        }
+    }
     cv::Mat img_gray = img;
     util::convert_to_grayscale(img_gray, camera_->color_order_);
 
@@ -388,6 +396,14 @@ data::frame system::create_stereo_frame(const cv::Mat& left_img, const cv::Mat& 
     }
     if (!camera_->is_valid_shape(right_img)) {
         spdlog::warn("preprocess: Input image size is invalid");
+    }
+    if (!mask.empty()) {
+        if (!camera_->is_valid_shape(mask)) {
+            spdlog::warn("preprocess: Input mask size is invalid");
+        }
+        if (mask.type() != CV_8UC1) {
+            spdlog::warn("preprocess: Input mask type is invalid");
+        }
     }
     cv::Mat img_gray = left_img;
     cv::Mat right_img_gray = right_img;
@@ -446,7 +462,18 @@ data::frame system::create_RGBD_frame(const cv::Mat& rgb_img, const cv::Mat& dep
         spdlog::warn("preprocess: Input image size is invalid");
     }
     if (!camera_->is_valid_shape(depthmap)) {
-        spdlog::warn("preprocess: Input image size is invalid");
+        spdlog::warn("preprocess: Input depthmap size is invalid");
+    }
+    if (depthmap.type() != CV_32FC1) {
+        spdlog::warn("preprocess: Input depthmap type is invalid");
+    }
+    if (!mask.empty()) {
+        if (!camera_->is_valid_shape(mask)) {
+            spdlog::warn("preprocess: Input mask size is invalid");
+        }
+        if (mask.type() != CV_8UC1) {
+            spdlog::warn("preprocess: Input mask type is invalid");
+        }
     }
     cv::Mat img_gray = rgb_img;
     cv::Mat img_depth = depthmap;
