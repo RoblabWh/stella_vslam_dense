@@ -130,16 +130,16 @@ public:
         return system_->relocalize_by_pose_2d(tuple_to_homogeneous(cam_pose_wc), normal_vec);
     }
 
-    PyPose feed_monocular_frame(PyImage img, double timestamp, PyImage mask = PyImage()) {
+    std::optional<PyPose> feed_monocular_frame(PyImage img, double timestamp, PyImage mask = PyImage()) {
         const auto img_ = cv::Mat(img.shape(0), img.shape(1), CV_8UC(img.shape(2)), img.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_monocular_frame(img_, timestamp, mask_); }, mask);
     }
-    PyPose feed_stereo_frame(PyImage left_img, PyImage right_img, double timestamp, PyImage mask = PyImage()) {
+    std::optional<PyPose> feed_stereo_frame(PyImage left_img, PyImage right_img, double timestamp, PyImage mask = PyImage()) {
         const auto left_img_ = cv::Mat(left_img.shape(0), left_img.shape(1), CV_8UC(left_img.shape(2)), left_img.mutable_data()).clone();
         const auto right_img_ = cv::Mat(right_img.shape(0), right_img.shape(1), CV_8UC(right_img.shape(2)), right_img.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_stereo_frame(left_img_, right_img_, timestamp, mask_); }, mask);
     }
-    PyPose feed_rgbd_frame(PyImage rgb_img, ndarray<float> depthmap, double timestamp, PyImage mask = PyImage()) {
+    std::optional<PyPose> feed_rgbd_frame(PyImage rgb_img, ndarray<float> depthmap, double timestamp, PyImage mask = PyImage()) {
         const auto rgb_img_ = cv::Mat(rgb_img.shape(0), rgb_img.shape(1), CV_8UC(rgb_img.shape(2)), rgb_img.mutable_data()).clone();
         const auto depthmap_ = cv::Mat(depthmap.shape(0), depthmap.shape(1), CV_32FC1, depthmap.mutable_data()).clone();
         return feed_frame([&](const auto& mask_) { return system_->feed_RGBD_frame(rgb_img_, depthmap_, timestamp, mask_); }, mask);
@@ -164,8 +164,6 @@ public:
     std::tuple<PyPoints, PyPoints> get_all_landmarks() {
         std::vector<Eigen::Vector3f> all_points;
         std::vector<Eigen::Vector3f> local_points;
-        ssize_t all_points_size;
-        ssize_t local_points_size;
         {
             py::gil_scoped_release release;
 
@@ -173,14 +171,14 @@ public:
             std::set<std::shared_ptr<data::landmark>> local_landmarks;
             map_publisher_->get_landmarks(all_landmarks, local_landmarks);
 
-            std::tie(all_points, all_points_size) = landmarks_to_ndarray(all_landmarks);
-            std::tie(local_points, local_points_size) = landmarks_to_ndarray(local_landmarks);
+            all_points = landmarks_to_points(all_landmarks);
+            local_points = landmarks_to_points(local_landmarks);
         }
 
-        PyPoints np_all_points({all_points_size, 3L});
+        PyPoints np_all_points({all_points.size(), 3UL});
         std::memcpy(np_all_points.mutable_data(), all_points.data(), np_all_points.nbytes());
 
-        PyPoints np_local_points({local_points_size, 3L});
+        PyPoints np_local_points({local_points.size(), 3UL});
         std::memcpy(np_local_points.mutable_data(), local_points.data(), np_local_points.nbytes());
 
         return {np_all_points, np_local_points};
@@ -189,61 +187,47 @@ public:
     std::tuple<PyPoints, PyImage> get_dense_points() {
         std::vector<Eigen::Vector3f> points;
         std::vector<Eigen::Vector3<uint8_t>> colors;
-        Eigen::Vector3f* points_ptr;
-        Eigen::Vector3<uint8_t>* color_ptr;
         {
             py::gil_scoped_release release;
 
             std::vector<std::shared_ptr<data::dense_point>> dense_points;
             map_publisher_->get_dense_points(dense_points);
 
-            points.resize(dense_points.size());
-            points_ptr = points.data();
-
-            colors.resize(dense_points.size());
-            color_ptr = colors.data();
+            points.reserve(dense_points.size());
+            colors.reserve(dense_points.size());
 
             for (const auto& pt : dense_points) {
                 if (pt) {
-                    ndarray_append(points_ptr, pt, [](const auto& pt) { return pt->get_pos_in_world().template cast<float>(); });
-                    ndarray_append(color_ptr, pt, [](const auto& pt) { return pt->get_color_in_rgb(); });
+                    points.emplace_back(pt->get_pos_in_world().cast<float>());
+                    colors.emplace_back(pt->get_color_in_rgb());
                 }
             }
         }
 
-        PyPoints np_points({points_ptr - points.data(), 3L});
+        PyPoints np_points({points.size(), 3UL});
         std::memcpy(np_points.mutable_data(), points.data(), np_points.nbytes());
 
-        PyImage np_color({color_ptr - colors.data(), 3L});
+        PyImage np_color({colors.size(), 3UL});
         std::memcpy(np_color.mutable_data(), colors.data(), np_color.nbytes());
 
         return {np_points, np_color};
     }
 
-    std::tuple<std::map<uint32_t, PyPose>, ndarray<float>, ndarray<float>, ndarray<float>> get_keyframe_graph(const uint32_t min_shared_lms) {
+    std::tuple<std::unordered_map<uint32_t, PyPose>, ndarray<float>, ndarray<float>, ndarray<float>> get_keyframe_graph(const uint32_t min_shared_lms) {
+        std::vector<std::pair<uint32_t, Eigen::Matrix4d>> keyframe_pose;
         std::vector<Eigen::Vector3f> spanning_tree_edges;
         std::vector<Eigen::Vector3f> loop_edges;
         std::vector<Eigen::Vector3f> covisibility_edges;
-        Eigen::Vector3f *spanning_tree_ptr;
-        Eigen::Vector3f *loop_ptr;
-        Eigen::Vector3f *covisibility_ptr;
-        std::map<uint32_t, Eigen::Matrix4d> keyframe_pose;
         {
             py::gil_scoped_release release;
 
             std::vector<std::shared_ptr<data::keyframe>> all_keyframes;
             map_publisher_->get_keyframes(all_keyframes);
 
-            const auto size_max = all_keyframes.size() * all_keyframes.size() * 2;
-
-            spanning_tree_edges.resize(all_keyframes.size() * 2);
-            spanning_tree_ptr = spanning_tree_edges.data();
-
-            loop_edges.resize(size_max);
-            loop_ptr = loop_edges.data();
-
-            covisibility_edges.resize(size_max);
-            covisibility_ptr = covisibility_edges.data();
+            // Reserve enough memory that realloc is mostly unnecessary
+            keyframe_pose.reserve(all_keyframes.size());
+            spanning_tree_edges.reserve(all_keyframes.size() * 2);
+            covisibility_edges.reserve(all_keyframes.size() * 32);
 
             for (const auto& kf : all_keyframes) {
                 if (!kf || kf->will_be_erased()) {
@@ -254,20 +238,22 @@ public:
                 const auto kf_id = kf->id_;
 
                 // get keyframe pose
-                keyframe_pose[kf_id] = kf->get_pose_wc();
+                keyframe_pose.emplace_back(kf_id, kf->get_pose_wc());
                 const auto kf_pos = kf->get_trans_wc().cast<float>().eval();
 
                 // get spanning tree edges
                 const auto spanning_parent = kf->graph_node_->get_spanning_parent();
                 if (spanning_parent) {
-                    append_edge(spanning_tree_ptr, spanning_parent, kf_pos);
+                    spanning_tree_edges.emplace_back(kf_pos);
+                    spanning_tree_edges.emplace_back(spanning_parent->get_trans_wc().cast<float>());
                 }
 
                 // get loop edges
                 const auto kf_loop_edges = kf->graph_node_->get_loop_edges();
                 for (const auto& loop_edge : kf_loop_edges) {
                     if (loop_edge && (loop_edge->id_ >= kf_id)) {
-                        append_edge(loop_ptr, loop_edge, kf_pos);
+                        loop_edges.emplace_back(kf_pos);
+                        loop_edges.emplace_back(loop_edge->get_trans_wc().cast<float>());
                     }
                 }
 
@@ -275,24 +261,25 @@ public:
                 const auto kf_covisibility_edges = kf->graph_node_->get_covisibilities_over_min_num_shared_lms(min_shared_lms);
                 for (const auto& covisibility_edge : kf_covisibility_edges) {
                     if (covisibility_edge && !covisibility_edge->will_be_erased() && (covisibility_edge->id_ >= kf_id)) {
-                        append_edge(covisibility_ptr, covisibility_edge, kf_pos);
+                        covisibility_edges.emplace_back(kf_pos);
+                        covisibility_edges.emplace_back(covisibility_edge->get_trans_wc().cast<float>());
                     }
                 }
             }
         }
 
-        std::map<uint32_t, PyPose> np_keyframe_pose;
+        std::unordered_map<uint32_t, PyPose> np_keyframe_pose;
         for (const auto& [id, pose] : keyframe_pose) {
             np_keyframe_pose[id] = homogeneous_to_tuple(pose);
         }
 
-        ndarray<float> np_spanning_tree_edges({(spanning_tree_ptr - spanning_tree_edges.data()) / 2, 2L, 3L});
+        ndarray<float> np_spanning_tree_edges({spanning_tree_edges.size() / 2, 2UL, 3UL});
         std::memcpy(np_spanning_tree_edges.mutable_data(), spanning_tree_edges.data(), np_spanning_tree_edges.nbytes());
 
-        ndarray<float> np_loop_edges({(loop_ptr - loop_edges.data()) / 2, 2L, 3L});
+        ndarray<float> np_loop_edges({loop_edges.size() / 2, 2UL, 3UL});
         std::memcpy(np_loop_edges.mutable_data(), loop_edges.data(), np_loop_edges.nbytes());
 
-        ndarray<float> np_covisibility_edges({(covisibility_ptr - covisibility_edges.data()) / 2, 2L, 3L});
+        ndarray<float> np_covisibility_edges({covisibility_edges.size() / 2, 2UL, 3UL});
         std::memcpy(np_covisibility_edges.mutable_data(), covisibility_edges.data(), np_covisibility_edges.nbytes());
 
         return {np_keyframe_pose, np_spanning_tree_edges, np_loop_edges, np_covisibility_edges};
@@ -303,58 +290,43 @@ private:
     std::shared_ptr<publish::frame_publisher> frame_publisher_;
     std::shared_ptr<publish::map_publisher> map_publisher_;
 
-    PyPose feed_frame(std::function<std::shared_ptr<Eigen::Matrix4d>(const cv::Mat&)> feed_method, PyImage mask) {
+    template<typename F>
+    static inline std::optional<PyPose> feed_frame(F&& feed_method, PyImage mask) {
         auto mask_ = cv::Mat();
         if (mask.size() > 0) {
             mask_ = cv::Mat(mask.shape(0), mask.shape(1), CV_8UC1, mask.mutable_data()).clone();
         }
 
-        auto pose_in_world = Eigen::Matrix4d::Identity().eval();
         std::shared_ptr<Eigen::Matrix4d> pose;
         {
             py::gil_scoped_release release;
             pose = feed_method(mask_);
-            if (pose) {
-                pose_in_world = *pose;
-            }
         }
-        return homogeneous_to_tuple(pose_in_world);
+        return pose ? std::optional<PyPose>{homogeneous_to_tuple(*pose)} : std::nullopt;
     }
 
     // Conversion utilities
 
-    template<typename P, typename O, typename F>
-    static inline void ndarray_append(P& ptr, const O& obj, const F& getter) {
-        *ptr = getter(obj);
-        ++ptr;
-    }
-
-    static inline void append_edge(Eigen::Vector3f*& ptr, const std::shared_ptr<data::keyframe>& dst, const Eigen::Vector3f& src) {
-        ndarray_append(ptr, src, [](const auto& pos) { return pos; });
-        ndarray_append(ptr, dst, [](const auto& kf) { return kf->get_trans_wc().template cast<float>(); });
-    }
-
-    template<typename S>
-    static std::tuple<std::vector<Eigen::Vector3f>, ssize_t> landmarks_to_ndarray(const S& landmarks) {
+    template<typename C>
+    static std::vector<Eigen::Vector3f> landmarks_to_points(const C& landmarks) {
         std::vector<Eigen::Vector3f> points;
-        points.resize(landmarks.size());
-        auto points_ptr = points.data();
+        points.reserve(landmarks.size());
 
         for (const auto& lm : landmarks) {
             if (lm) {
-                ndarray_append(points_ptr, lm, [](const auto& lm) { return lm->get_pos_in_world().template cast<float>(); });
+                points.emplace_back(lm->get_pos_in_world().template cast<float>());
             }
         }
-        return {points, points_ptr - points.data()};
+        return points;
     }
 
     static inline PyPose homogeneous_to_tuple(const Eigen::Matrix4d& pose) {
         ndarray<float> np_position(3);
-        const auto position = pose.topRightCorner<3, 1>();
+        const auto& position = pose.topRightCorner<3, 1>();
         Eigen::Map<Eigen::Vector3f, Eigen::Unaligned>(np_position.mutable_data()) = position.cast<float>();
 
         ndarray<float> np_orientation(4);
-        const auto orientation = Eigen::Quaterniond(pose.topLeftCorner<3, 3>());
+        const auto& orientation = Eigen::Quaterniond(pose.topLeftCorner<3, 3>());
         Eigen::Map<Eigen::Vector4f, Eigen::Unaligned>(np_orientation.mutable_data()) = orientation.coeffs().cast<float>();
 
         return {np_position, np_orientation};
