@@ -44,10 +44,10 @@ public:
     //-----------------------------------------
     // main process
 
-    //! Run main loop of the mapping module
+    //! Run main loop of the dense module
     void run();
 
-    //! Queue a keyframe to process the mapping
+    //! Queue a keyframe to process the dense
     std::shared_future<void> async_add_keyframe(const std::shared_ptr<data::keyframe>& keyfrm);
 
     //! Check if keyframe is queued
@@ -56,34 +56,39 @@ public:
     //! Get the number of queued keyframes
     unsigned int get_num_queued_keyframes() const;
 
+    //! Check if the dense module is disabled
+    bool is_disabled() const {
+        return patch_match_ == nullptr;
+    }
+
     //-----------------------------------------
     // management for reset process
 
-    //! Request to reset the mapping module
+    //! Request to reset the dense module
     std::shared_future<void> async_reset();
 
     //-----------------------------------------
     // management for pause process
 
-    //! Request to pause the mapping module
+    //! Request to pause the dense module
     std::shared_future<void> async_pause();
 
-    //! Check if the mapping module is requested to be paused or not
+    //! Check if the dense module is requested to be paused
     bool pause_is_requested() const;
 
-    //! Check if the mapping module is paused or not
+    //! Check if the dense module is paused
     bool is_paused() const;
 
-    //! Resume the mapping module
+    //! Resume the dense module
     void resume();
 
     //-----------------------------------------
     // management for terminate process
 
-    //! Request to terminate the mapping module
+    //! Request to terminate the dense module
     std::shared_future<void> async_terminate();
 
-    //! Check if the mapping module is terminated or not
+    //! Check if the dense module is terminated
     bool is_terminated() const;
 
 private:
@@ -114,7 +119,7 @@ private:
     //! Reset the variables
     void reset();
 
-    //! flag which indicates whether reset is requested or not
+    //! flag which indicates whether reset is requested
     bool reset_is_requested_ = false;
 
     //-----------------------------------------
@@ -129,12 +134,12 @@ private:
     //! future for pause
     std::shared_future<void> future_pause_;
 
-    //! Pause the mapping module
+    //! Pause the dense module
     void pause();
 
-    //! flag which indicates termination is requested or not
+    //! flag which indicates termination is requested
     bool pause_is_requested_ = false;
-    //! flag which indicates whether the main loop is paused or not
+    //! flag which indicates whether the main loop is paused
     bool is_paused_ = false;
 
     //-----------------------------------------
@@ -149,15 +154,15 @@ private:
     //! future for terminate
     std::shared_future<void> future_terminate_;
 
-    //! Check if termination is requested or not
+    //! Check if termination is requested
     bool terminate_is_requested() const;
 
     //! Raise the flag which indicates the main loop has been already terminated
     void terminate();
 
-    //! flag which indicates termination is requested or not
+    //! flag which indicates termination is requested
     bool terminate_is_requested_ = false;
-    //! flag which indicates whether the main loop is terminated or not
+    //! flag which indicates whether the main loop is terminated
     bool is_terminated_ = true;
 
     //-----------------------------------------

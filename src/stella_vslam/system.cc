@@ -67,7 +67,7 @@ system::system(const std::shared_ptr<config>& cfg, const std::string& vocab_file
     auto point_cloud_format = system_params["point_cloud_format"].as<std::string>("ply_ascii");
     point_cloud_io_ = io::point_cloud_io_factory::create(point_cloud_format);
 
-    // point cloud I/O
+    // keyframe I/O
     auto keyframe_format = system_params["keyframe_format"].as<std::string>("png");
     keyframe_io_ = io::keyframe_io_factory::create(keyframe_format);
 
@@ -243,10 +243,10 @@ bool system::save_map_database(const std::string& path) const {
     return ok;
 }
 
-bool system::save_point_cloud(const std::string& path) const {
+bool system::save_point_cloud(const std::string& path, std::optional<bool> dense) const {
     pause_other_threads();
     spdlog::debug("save_point_cloud: {}", path);
-    bool ok = point_cloud_io_->save(path, map_db_);
+    bool ok = point_cloud_io_->save(path, map_db_, dense.has_value() ? dense.value() : !dense_->is_disabled());
     resume_other_threads();
     return ok;
 }

@@ -17,7 +17,8 @@ public:
      * Save the point cloud
      */
     virtual bool save(const std::string& path,
-                      const data::map_database* const map_db)
+                      const data::map_database* const map_db,
+                      bool dense)
         = 0;
 };
 

@@ -10,6 +10,7 @@
 #include <mutex>
 #include <atomic>
 #include <memory>
+#include <optional>
 
 #include <opencv2/core/mat.hpp>
 #include <spdlog/logger.h>
@@ -93,7 +94,7 @@ public:
     bool save_map_database(const std::string& path) const;
 
     //! Save the point cloud to file
-    bool save_point_cloud(const std::string& path) const;
+    bool save_point_cloud(const std::string& path, std::optional<bool> dense = std::nullopt) const;
 
     //! Save the keyrames to file
     bool save_keyframes(const std::string& path) const;

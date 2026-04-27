@@ -29,7 +29,8 @@ public:
      * Save the point cloud as PLY
      */
     bool save(const std::string& path,
-              const data::map_database* const map_db) override;
+              const data::map_database* const map_db,
+              bool dense) override;
 };
 
 } // namespace io

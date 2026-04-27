@@ -106,8 +106,8 @@ public:
     bool save_map_database(const std::string& path) {
         return system_->save_map_database(path);
     }
-    bool save_point_cloud(const std::string& path) {
-        return system_->save_point_cloud(path);
+    bool save_point_cloud(const std::string& path, std::optional<bool> dense) {
+        return system_->save_point_cloud(path, dense);
     }
     bool save_keyframes(const std::string& path) {
         return system_->save_keyframes(path);
@@ -409,7 +409,7 @@ PYBIND11_MODULE(stellapy, m) {
 
         .def("load_map_database", &stella_vslam::StellaVSLAM::load_map_database, py::arg("path"))
         .def("save_map_database", &stella_vslam::StellaVSLAM::save_map_database, py::arg("path"))
-        .def("save_point_cloud", &stella_vslam::StellaVSLAM::save_point_cloud, py::arg("path"))
+        .def("save_point_cloud", &stella_vslam::StellaVSLAM::save_point_cloud, py::arg("path"), py::arg("dense") = std::nullopt)
         .def("save_keyframes", &stella_vslam::StellaVSLAM::save_keyframes, py::arg("path"))
         .def("save_frame_trajectory", &stella_vslam::StellaVSLAM::save_frame_trajectory,
              py::arg("path"), py::arg("format"))
