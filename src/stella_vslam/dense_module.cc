@@ -368,4 +368,8 @@ void dense_module::terminate() {
     }
 }
 
+bool dense_module::is_available() const {
+    return patch_match_ != nullptr;
+}
+
 } // namespace stella_vslam

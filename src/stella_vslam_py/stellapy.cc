@@ -84,6 +84,9 @@ public:
     bool dense_reconstruction_is_enabled() const {
         return system_->dense_module_is_enabled();
     }
+    bool dense_reconstruction_is_available() const {
+        return system_->dense_module_is_available();
+    }
     void enable_loop_detection() {
         system_->enable_loop_detector();
     }
@@ -400,6 +403,7 @@ PYBIND11_MODULE(stellapy, m) {
         .def("enable_dense_reconstruction", &stella_vslam::StellaVSLAM::enable_dense_reconstruction)
         .def("disable_dense_reconstruction", &stella_vslam::StellaVSLAM::disable_dense_reconstruction)
         .def("dense_reconstruction_is_enabled", &stella_vslam::StellaVSLAM::dense_reconstruction_is_enabled)
+        .def("dense_reconstruction_is_available", &stella_vslam::StellaVSLAM::dense_reconstruction_is_available)
         .def("enable_loop_detection", &stella_vslam::StellaVSLAM::enable_loop_detection)
         .def("disable_loop_detection", &stella_vslam::StellaVSLAM::disable_loop_detection)
         .def("loop_detection_is_enabled", &stella_vslam::StellaVSLAM::loop_detection_is_enabled)

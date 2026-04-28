@@ -147,6 +147,9 @@ public:
     //! The dense module is enabled or not
     bool dense_module_is_enabled() const;
 
+    //! The dense module is available or not
+    bool dense_module_is_available() const;
+
 
     //-----------------------------------------
     // data feeding methods

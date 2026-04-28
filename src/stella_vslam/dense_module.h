@@ -56,10 +56,8 @@ public:
     //! Get the number of queued keyframes
     unsigned int get_num_queued_keyframes() const;
 
-    //! Check if the dense module is disabled
-    bool is_disabled() const {
-        return patch_match_ == nullptr;
-    }
+    //! Check if the dense module is available
+    bool is_available() const;
 
     //-----------------------------------------
     // management for reset process

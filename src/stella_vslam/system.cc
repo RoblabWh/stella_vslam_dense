@@ -246,7 +246,7 @@ bool system::save_map_database(const std::string& path) const {
 bool system::save_point_cloud(const std::string& path, std::optional<bool> dense) const {
     pause_other_threads();
     spdlog::debug("save_point_cloud: {}", path);
-    bool ok = point_cloud_io_->save(path, map_db_, dense.has_value() ? dense.value() : !dense_->is_disabled());
+    bool ok = point_cloud_io_->save(path, map_db_, dense.has_value() ? dense.value() : dense_->is_available());
     resume_other_threads();
     return ok;
 }
@@ -343,6 +343,10 @@ void system::disable_dense_module() {
 
 bool system::dense_module_is_enabled() const {
     return !dense_->is_paused();
+}
+
+bool system::dense_module_is_available() const {
+    return dense_->is_available();
 }
 
 data::frame system::create_monocular_frame(const cv::Mat& img, const double timestamp, const cv::Mat& mask) {
