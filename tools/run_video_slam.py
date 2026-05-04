@@ -7,16 +7,20 @@ import numpy as np
 import color_scheme as cs
 from argparse import ArgumentParser
 from stellapy import StellaVSLAM
+from tqdm import tqdm
 from viser import ViserServer
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, wait
 
 def main():
-    # Parse arguments
+    ## Parse arguments
     parser = ArgumentParser("StellaVSLAM")
 
     # General options
-    parser.add_argument("--log-level", default="info", help="log level")
+    parser.add_argument("--log-level", default="info", help="log level", choices=cs._SPDLOG_LEVEL_TO_PY.keys())
     parser.add_argument("--start-paused", action="store_true", help="start the SLAM process in paused state")
     parser.add_argument("--auto-term", action="store_true", help="automatically terminate when the video ends")
+    parser.add_argument("--disable-viewer", action="store_true", help="disable viewer and run SLAM headless")
 
     # Input options
     parser.add_argument("-v", "--vocab", required=True, help="vocabulary file path")
@@ -31,6 +35,7 @@ def main():
     # Mapping options
     parser.add_argument("--disable-mapping", action="store_true", help="disable mapping")
     parser.add_argument("--temporal-mapping", action="store_true", help="enable temporal mapping")
+    parser.add_argument("--disable-dense", action="store_true", help="disable dense reconstruction")
     parser.add_argument("--wait-loop-ba", action="store_true", help="wait until the loop BA is finished")
 
     # Output options
@@ -43,100 +48,88 @@ def main():
     # Parse arguments
     args = parser.parse_args()
 
+    # Setup logging
+    logger = cs.setup_logger(args.log_level)
+
     # Open video
+    if not os.path.isfile(args.video):
+        parser.error(f"Video file not found: {args.video}")
     cap = cv.VideoCapture(args.video)
     if not cap.isOpened():
-        print("Error: Could not open video.")
-        exit(1)
-    cap.set(cv.CAP_PROP_POS_MSEC, args.start_time)
+        parser.error(f"Could not open video: {args.video}")
+    if args.start_time and not cap.set(cv.CAP_PROP_POS_MSEC, args.start_time):
+        logger.warning("Could not seek to %d ms", args.start_time)
 
     # Load mask if provided
     if args.mask:
+        if not os.path.isfile(args.mask):
+            parser.error(f"Mask file not found: {args.mask}")
         mask = cv.imread(args.mask, cv.IMREAD_GRAYSCALE)
         if mask is None:
-            print("Error: Could not load mask image.")
-            exit(1)
+            parser.error(f"Could not decode mask image: {args.mask}")
     else:
         mask = np.array([])
 
-    # Setup Viewer
-    server = ViserServer()
-    server.scene.set_up_direction("-y")
-    server.gui.configure_theme(control_width="large", dark_mode=True, brand_color=cs.WH_LOGO)
 
-    # Add GUI elements
-    image_view = server.gui.add_image(np.zeros((1, 2, 3), dtype="uint8"))
-    # camera_mode = server.gui.add_dropdown("Camera Mode", ["Free", "LookAt", "Follow", "Lock"], "Free", hint="Set camera mode")
-    mapping = server.gui.add_checkbox("Mapping", not args.disable_mapping, hint="Enable/Disable mapping")
-    temporal_mapping = server.gui.add_checkbox("Temporal Mapping", args.temporal_mapping, disabled=True, hint="Enable/Disable temporal mapping")
-    dense_reconstruction = server.gui.add_checkbox("Dense Reconstruction", True, hint="Enable/Disable dense reconstruction")
-    loop_detection = server.gui.add_checkbox("Loop Detection", not args.temporal_mapping, disabled=args.temporal_mapping, hint="Enable/Disable loop detection")
-    wait_loop_ba = server.gui.add_checkbox("Wait Loop BA", args.wait_loop_ba, hint="Enable/Disable waiting for loop BA")
-    covisibility_min_shared = server.gui.add_slider("Covisibility Minimum Shared Landmarks", 10, 500, 10, 100, hint="Minimum shared landmarks for covisibility edge")
-    world_scale = server.gui.add_slider("World Scale", 0.01, 10.0, 0.1, 1.0, hint="Scale of the world visualization")
-    pause = server.gui.add_button("Unpause" if args.start_paused else "Pause", hint="Pause/Resume the SLAM process")
-    step = server.gui.add_button("Step", hint="Process one frame when paused", disabled=not args.start_paused)
-    reset = server.gui.add_button("Reset SLAM", hint="Request a full reset of the SLAM system")
-    terminate = server.gui.add_button("Terminate SLAM", hint="Request termination of the SLAM system")
+    ## Viewer Setup
+    viewer_enabled = not args.disable_viewer
+    if viewer_enabled:
+        # Setup Viewer
+        server = ViserServer()
+        server.scene.set_up_direction("-y")
+        server.gui.configure_theme(control_width="large", dark_mode=True, brand_color=cs.WH_LOGO)
 
-    # Add scene elements
-    camera = server.scene.add_camera_frustum("camera", np.pi/2, 2/1, color=cs.CAMERA)
-    landmarks_all = server.scene.add_point_cloud("all_landmarks", np.zeros((1, 3), dtype="float32"), cs.LANDMARK_ALL, point_shape="rounded")
-    landmarks_local = server.scene.add_point_cloud("local_landmarks", np.zeros((1, 3), dtype="float32"), cs.LANDMARK_LOCAL, point_shape="sparkle")
-    dense_points = server.scene.add_point_cloud("dense_points", np.zeros((1, 3), dtype="float32"), np.zeros((1, 3), dtype="uint8"), point_shape="circle")
+        # Add GUI elements
+        image_view = server.gui.add_image(np.zeros((1, 2, 3), dtype="uint8"))
+        progress = server.gui.add_progress_bar(0.0, animated=not args.start_paused)
+        # camera_mode = server.gui.add_dropdown("Camera Mode", ["Free", "LookAt", "Follow", "Lock"], "Free", hint="Set camera mode")
+        mapping = server.gui.add_checkbox("Mapping", not args.disable_mapping, hint="Enable/Disable mapping")
+        temporal_mapping = server.gui.add_checkbox("Temporal Mapping", args.temporal_mapping, disabled=True, hint="Enable/Disable temporal mapping")
+        dense_reconstruction = server.gui.add_checkbox("Dense Reconstruction", not args.disable_dense, hint="Enable/Disable dense reconstruction")
+        loop_detection = server.gui.add_checkbox("Loop Detection", not args.temporal_mapping, disabled=args.temporal_mapping, hint="Enable/Disable loop detection")
+        wait_loop_ba = server.gui.add_checkbox("Wait Loop BA", args.wait_loop_ba, hint="Enable/Disable waiting for loop BA")
+        wait_real_time = server.gui.add_checkbox("Wait Real-Time", args.wait, hint="Enable/Disable waiting to enforce real-time processing")
+        covisibility_min_shared = server.gui.add_slider("Covisibility Minimum Shared Landmarks", 10, 500, 10, 100, hint="Minimum shared landmarks for covisibility edge")
+        world_scale = server.gui.add_slider("World Scale", 0.01, 10.0, 0.1, 1.0, hint="Scale of the world visualization")
+        pause = server.gui.add_button("Unpause" if args.start_paused else "Pause", hint="Pause/Resume the SLAM process")
+        step = server.gui.add_button("Step", hint="Process one frame when paused", disabled=not args.start_paused)
+        reset = server.gui.add_button("Reset SLAM", hint="Request a full reset of the SLAM system")
+        terminate = server.gui.add_button("Terminate SLAM", hint="Request termination of the SLAM system")
 
-    spanning_tree = server.scene.add_line_segments("spanning_tree", np.zeros((0, 2, 3), dtype="float32"), cs.SPANNING_TREE)
-    loop = server.scene.add_line_segments("loop", np.zeros((0, 2, 3), dtype="float32"), cs.LOOP)
-    covisibility = server.scene.add_line_segments("covisibility", np.zeros((0, 2, 3), dtype="float32"), cs.GRAPH)
-    trajectory = server.scene.add_line_segments("trajectory", np.zeros((0, 2, 3), dtype="float32"), cs.TRAJECTORY)
+        # Add scene elements
+        camera = server.scene.add_camera_frustum("camera", np.pi/2, 2/1, color=cs.CAMERA)
+        landmarks_all = server.scene.add_point_cloud("all_landmarks", np.zeros((1, 3), dtype="float32"), cs.LANDMARK_ALL, point_shape="rounded")
+        landmarks_local = server.scene.add_point_cloud("local_landmarks", np.zeros((1, 3), dtype="float32"), cs.LANDMARK_LOCAL, point_shape="sparkle")
+        dense_points = server.scene.add_point_cloud("dense_points", np.zeros((1, 3), dtype="float32"), np.zeros((1, 3), dtype="uint8"), point_shape="circle")
 
-    # DEBUGGING: Add time profiling plot
-    runtime_profiling = server.gui.add_uplot(
-        (
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-            np.array([0.0]),
-        ),
-        (
-            cs.SERIES_TIME,
-            cs.SERIES_TRACKING,
-            cs.SERIES_VISUALIZATION,
-            cs.SERIES_IMAGE_VIEW,
-            cs.SERIES_LANDMARKS,
-            cs.SERIES_DENSE_POINTS,
-            cs.SERIES_KEYFRAME_GRAPH,
-            cs.SERIES_TRAJECTORY,
-            cs.SERIES_PROCESSING,
-            cs.SERIES_RT_DEADLINE,
-        ),
-        aspect=2/1,
-        visible=args.log_level == "debug",
-    )
-    timestamps = list()
+        spanning_tree = server.scene.add_line_segments("spanning_tree", np.zeros((0, 2, 3), dtype="float32"), cs.SPANNING_TREE)
+        loop = server.scene.add_line_segments("loop", np.zeros((0, 2, 3), dtype="float32"), cs.LOOP)
+        covisibility = server.scene.add_line_segments("covisibility", np.zeros((0, 2, 3), dtype="float32"), cs.GRAPH)
+        trajectory = server.scene.add_line_segments("trajectory", np.zeros((0, 2, 3), dtype="float32"), cs.TRAJECTORY)
+
+        #DEBUG: Add time profiling plot
+        #NOTE: This relies on the playback never beeing paused and is still a bit hacky
+        runtime_profiling = None
+        if args.log_level == "debug":
+            runtime_profiling = server.gui.add_uplot(
+                ( np.array([0.0]), ) * len(cs.RUNTIME_SERIES),
+                cs.RUNTIME_SERIES,
+                aspect=2/1,
+            )
+        times_visualization = list()
+        times_image_view = Queue()
+        times_landmarks = Queue()
+        times_dense_points = Queue()
+        times_keyframe_graph = Queue()
+        times_trajectory = Queue()
+
     times_tracking = list()
-    times_image_view = list()
-    times_landmarks = list()
-    times_dense_points = list()
-    times_keyframe_graph = list()
-    times_trajectory = list()
-    times_visualization = list()
     times_processing = list()
-    runtime_image_view = 0.0
-    runtime_landmarks = 0.0
-    runtime_dense_points = 0.0
-    runtime_keyframe_graph = 0.0
-    runtime_trajectory = 0.0
-    runtime_visualization = 0.0
-    runtime_processing = 0.0
+    times_frame_read = Queue()
+    times_frame_skip = Queue()
 
-    # Bringup SLAM
+
+    ## Bringup SLAM
     slam = StellaVSLAM(args.config, args.vocab, args.log_level)
     slam.startup(not args.map_db_in)
     if args.map_db_in:
@@ -146,140 +139,108 @@ def main():
     if args.temporal_mapping:
         slam.enable_temporal_mapping()
         slam.disable_loop_detection()
-    if slam.dense_reconstruction_is_enabled():
-        dense_reconstruction.value = True
-        dense_reconstruction.disabled = False
-        dense_reconstruction.on_update(lambda v: slam.enable_dense_reconstruction() if v.target.value else slam.disable_dense_reconstruction())
-    else:
-        dense_reconstruction.value = False
-        dense_reconstruction.disabled = True
+    if slam.dense_reconstruction_is_enabled() and args.disable_dense:
+        slam.disable_dense_reconstruction()
 
-    # Wire SLAM inputs
-    reset.on_click(lambda _: slam.reset())
-    terminate.on_click(lambda _: slam.terminate())
-    loop_detection.on_update(lambda v: slam.enable_loop_detection() if v.target.value else slam.disable_loop_detection())
-    mapping.on_update(lambda v: slam.enable_mapping() if v.target.value else slam.disable_mapping())
-
-    # Wire control variables
-    paused = args.start_paused
-    def toggle_pause(_):
-        nonlocal paused
-        if paused:
-            paused = False
-            pause.label = "Pause"
-            step.disabled = True
-        else:
-            paused = True
-            pause.label = "Unpause"
-            step.disabled = False
-    pause.on_click(toggle_pause)
+    paused = False
     stepping = False
-    def step_once(_):
-        nonlocal stepping
-        stepping = True
-    step.on_click(step_once)
+    if viewer_enabled:
+        paused = args.start_paused
+        if slam.dense_reconstruction_is_available():
+            dense_reconstruction.on_update(lambda v: slam.enable_dense_reconstruction() if v.target.value else slam.disable_dense_reconstruction())
+        else:
+            dense_reconstruction.disabled = True
+            dense_reconstruction.value = False
+
+        # Wire SLAM inputs
+        reset.on_click(lambda _: slam.reset())
+        terminate.on_click(lambda _: slam.terminate())
+        loop_detection.on_update(lambda v: slam.enable_loop_detection() if v.target.value else slam.disable_loop_detection())
+        mapping.on_update(lambda v: slam.enable_mapping() if v.target.value else slam.disable_mapping())
+
+        # Wire control variables
+        def toggle_pause(_):
+            nonlocal paused
+            if paused:
+                paused = False
+                pause.label = "Pause"
+                step.disabled = True
+                progress.animated = True
+            else:
+                paused = True
+                pause.label = "Unpause"
+                step.disabled = False
+                progress.animated = False
+        pause.on_click(toggle_pause)
+        def step_once(_):
+            nonlocal stepping
+            stepping = True
+        step.on_click(step_once)
+
 
     # Constant variables
     frame_duration = args.frame_step / cap.get(cv.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+    total_steps = max(1, total_frames // args.frame_step)
 
     # Loop variables
     keyframes = dict()
     trajectory_poses = list()
     timestamp = args.start_timestamp
 
-    # Main loop
-    while not slam.terminate_is_requested():
-        start_processing = time.time()
 
-        # Process next frame
-        if not paused or stepping:
-            stepping = False
+    ## Setup async processing
+    pool = ThreadPoolExecutor()
+    futures = dict()
 
+    # Frame reader
+    frame_queue = Queue(maxsize=1)
+    def frame_reader():
+        while not slam.terminate_is_requested():
             # Read next frame
+            start_frame_read = time.monotonic()
             ok, img = cap.read()
+            times_frame_read.put(time.monotonic() - start_frame_read)
+            frame_queue.put(img)
+            if not ok:
+                break
 
-            if ok:
-                # DEBUGGING: Update time profiling plot
-                if timestamp > args.start_timestamp:
-                    timestamps.append(timestamp)
-                    times_image_view.append(runtime_image_view)
-                    times_landmarks.append(runtime_landmarks)
-                    times_dense_points.append(runtime_dense_points)
-                    times_keyframe_graph.append(runtime_keyframe_graph)
-                    times_trajectory.append(runtime_trajectory)
-                    times_visualization.append(runtime_visualization)
-                    times_processing.append(runtime_processing)
+            # Skip frames if requested
+            start_frame_skip = time.monotonic()
+            for _ in range(args.frame_step - 1):
+                cap.grab()
+            times_frame_skip.put(time.monotonic() - start_frame_skip)
+        # Unblock main thread on termination if necessary
+        if frame_queue.empty():
+            frame_queue.put(None)
+    pool.submit(frame_reader)
 
-                    runtime_profiling.data = (
-                        np.array(timestamps),
-                        np.array(times_tracking),
-                        np.array(times_visualization),
-                        np.array(times_image_view),
-                        np.array(times_landmarks),
-                        np.array(times_dense_points),
-                        np.array(times_keyframe_graph),
-                        np.array(times_trajectory),
-                        np.array(times_processing),
-                        np.array([frame_duration for _ in timestamps]),
-                    )
 
-                # Wait for loop BA if requested
-                if wait_loop_ba.value:
-                    while slam.loop_ba_is_running():
-                        time.sleep(0.01)
+    # Define visualization update functions
 
-                # Clear visualizations if reset is requested
-                if slam.reset_is_requested():
-                    trajectory_poses.clear()
-
-                # Track next frame
-                start_tracking = time.time()
-                position, orientation = slam.feed_monocular_frame(img, timestamp, mask)
-                tracking_time = time.time() - start_tracking
-                times_tracking.append(tracking_time)
-
-                # Update viewer pose
-                camera.position = position * world_scale.value
-                camera.wxyz = orientation
-
-                # Append current pose to trajectory
-                trajectory_poses.append(position)
-
-                # Advance timestamp
-                timestamp += frame_duration
-
-                # Skip frames if requested
-                for _ in range(args.frame_step - 1):
-                    cap.grab()
-
-            # Terminate when video ends if requested
-            elif args.auto_term:
-                print("End of video.")
-                slam.terminate()
-
-        start_visualization = time.time()
-
-        # Update tracking image
-        start_image_view = time.time()
+    def update_image_view():
+        start_image_view = time.monotonic()
         image_view.image = slam.draw_frame()
-        runtime_image_view = time.time() - start_image_view
+        times_image_view.put(time.monotonic() - start_image_view)
 
-        # Update landmarks
-        start_landmarks = time.time()
+    def update_landmarks():
+        start_landmarks = time.monotonic()
         all_lms, local_lms = slam.get_all_landmarks()
         landmarks_all.points = all_lms * world_scale.value
         landmarks_local.points = local_lms * world_scale.value
-        runtime_landmarks = time.time() - start_landmarks
+        times_landmarks.put(time.monotonic() - start_landmarks)
 
-        # Update dense points
-        start_dense_points = time.time()
+    def update_dense_points():
+        start_dense_points = time.monotonic()
         points, colors = slam.get_dense_points()
         dense_points.points = points * world_scale.value
         dense_points.colors = colors
-        runtime_dense_points = time.time() - start_dense_points
+        times_dense_points.put(time.monotonic() - start_dense_points)
+
+    def update_keyframe_graph():
+        start_keyframe_graph = time.monotonic()
 
         # Get new keyframes data
-        start_keyframe_graph = time.time()
         keyframe_pose, spanning_tree_edges, loop_edges, covisibility_edges = slam.get_keyframe_graph(covisibility_min_shared.value)
 
         # Update keyframes
@@ -305,20 +266,147 @@ def main():
         # Update covisibility edges
         covisibility.points = covisibility_edges * world_scale.value
 
-        runtime_keyframe_graph = time.time() - start_keyframe_graph
+        times_keyframe_graph.put(time.monotonic() - start_keyframe_graph)
 
-        # Update trajectory
-        start_trajectory = time.time()
+    def update_trajectory():
+        start_trajectory = time.monotonic()
         trajectory.points = np.stack([trajectory_poses[:-1], trajectory_poses[1:]], axis=1) * world_scale.value
-        runtime_trajectory = time.time() - start_trajectory
+        times_trajectory.put(time.monotonic() - start_trajectory)
 
-        runtime_visualization = time.time() - start_visualization
+
+    ## Main loop
+    pbar = tqdm(total=total_steps, desc="Processing frames", unit=" frames")
+    while not slam.terminate_is_requested():
+        start_processing = time.monotonic()
+
+        # Process next frame
+        if not paused or stepping:
+            stepping = False
+
+            # Get next frame
+            img = frame_queue.get()
+
+            if img is not None:
+                # Wait for loop BA if requested
+                if wait_loop_ba.value if viewer_enabled else args.wait_loop_ba:
+                    while slam.loop_ba_is_running():
+                        time.sleep(0.001)
+
+                # Clear visualizations if reset is requested
+                if slam.reset_is_requested():
+                    trajectory_poses.clear()
+
+                # Track next frame
+                start_tracking = time.monotonic()
+                tracking = slam.feed_monocular_frame(img, timestamp, mask)
+                tracking_time = time.monotonic() - start_tracking
+                times_tracking.append(tracking_time)
+
+                if tracking is not None:
+                    position, orientation = tracking
+
+                    # Update viewer pose
+                    if viewer_enabled:
+                        camera.position = position * world_scale.value
+                        camera.wxyz = orientation
+
+                    # Append current pose to trajectory
+                    trajectory_poses.append(position)
+
+                # Advance progress
+                timestamp += frame_duration
+                pbar.update()
+                if viewer_enabled:
+                    progress.value = pbar.n / total_steps * 100
+
+            # Retry and check for termination if video hasn't ended
+            elif pbar.n < total_steps:
+                logger.debug("No frame received, but video hasn't ended, retrying...")
+                pass
+
+            # Terminate when video ends if requested
+            elif args.disable_viewer or args.auto_term:
+                logger.info("End of video.")
+                slam.terminate()
+
+            # Pause at the end of the video
+            else:
+                logger.info("End of video, waiting for termination...")
+                pause.disabled = True
+                step.disabled = True
+                pause.label = "End of Video"
+                progress.animated = False
+                paused = True
+                stepping = False
+
+
+        # Update visualizations
+        if viewer_enabled:
+            start_visualization = time.monotonic()
+
+            # Update tracking image
+            if update_image_view in futures:
+                wait([futures[update_image_view]])
+            futures[update_image_view] = pool.submit(update_image_view)
+
+            # Update landmarks
+            if update_landmarks not in futures or futures[update_landmarks].done():
+                futures[update_landmarks] = pool.submit(update_landmarks)
+            else:
+                logger.debug("Landmarks update is taking too long, skipping update")
+                times_landmarks.put(np.nan)
+
+            # Update dense points
+            if update_dense_points not in futures or futures[update_dense_points].done():
+                futures[update_dense_points] = pool.submit(update_dense_points)
+            else:
+                logger.debug("Dense points update is taking too long, skipping update")
+                times_dense_points.put(np.nan)
+
+            # Update keyframe graph
+            if update_keyframe_graph not in futures or futures[update_keyframe_graph].done():
+                futures[update_keyframe_graph] = pool.submit(update_keyframe_graph)
+            else:
+                logger.debug("Keyframe graph update is taking too long, skipping update")
+                times_keyframe_graph.put(np.nan)
+
+            # Update trajectory
+            if update_trajectory not in futures or futures[update_trajectory].done():
+                futures[update_trajectory] = pool.submit(update_trajectory)
+            else:
+                logger.debug("Trajectory update is taking too long, skipping update")
+                times_trajectory.put(np.nan)
+
+            #DEBUG: Update runtime profiling plot
+            if runtime_profiling is not None:
+                timestamps = np.arange(0, timestamp - frame_duration / 2, frame_duration)
+                runtime_profiling.data = (
+                    timestamps,
+                    np.array(times_processing, like=timestamps),
+                    np.array(times_tracking, like=timestamps),
+                    np.array(times_visualization, like=timestamps),
+                    np.array(times_frame_read.queue, like=timestamps),
+                    np.array(times_frame_skip.queue, like=timestamps),
+                    np.array(times_image_view.queue, like=timestamps),
+                    np.array(times_landmarks.queue, like=timestamps),
+                    np.array(times_dense_points.queue, like=timestamps),
+                    np.array(times_keyframe_graph.queue, like=timestamps),
+                    np.array(times_trajectory.queue, like=timestamps),
+                    np.full(len(timestamps), frame_duration),
+                )
+
+            times_visualization.append(time.monotonic() - start_visualization)
 
         # Sleep to enforce real-time processing if requested
-        runtime_processing = time.time() - start_processing
+        runtime_processing = time.monotonic() - start_processing
         sleep_duration = frame_duration - runtime_processing
-        if sleep_duration > 0 and (paused or args.wait):
+        if sleep_duration > 0 and (paused or (wait_real_time.value if viewer_enabled else args.wait)):
             time.sleep(sleep_duration)
+        times_processing.append(runtime_processing)
+
+    # Unblock frame reader on termination if necessary
+    if frame_queue.full():
+        frame_queue.get()
 
     # Stop SLAM
     slam.shutdown()
@@ -337,7 +425,7 @@ def main():
             pass
         slam.save_frame_trajectory(args.eval_log_dir + "/frame_trajectory.txt", "TUM")
         slam.save_keyframe_trajectory(args.eval_log_dir + "/keyframe_trajectory.txt", "TUM")
-        with open(args.eval_log_dir + "/track_times.txt", "w") as f:
+        with open(args.eval_log_dir + "/tracking_times.txt", "w") as f:
             for t in times_tracking:
                 f.write(f"{t}\n")
 

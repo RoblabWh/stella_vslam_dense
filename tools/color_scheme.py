@@ -1,3 +1,5 @@
+import logging
+from tqdm import tqdm
 from viser import uplot
 
 # Color scheme for dark mode GUI
@@ -13,45 +15,119 @@ LOOP = (1.0, 0.1, 0.1)
 TRAJECTORY = (0.1, 1.0, 0.1)
 
 # Plot series for time profiling
-SERIES_BASE = uplot.Series()
-SERIES_BASE["show"] = True
-SERIES_BASE["width"] = 1.0
+_SERIES_BASE = uplot.Series()
+_SERIES_BASE["show"] = True
+_SERIES_BASE["width"] = 1.0
 
 SERIES_TIME = uplot.Series()
 
-SERIES_IMAGE_VIEW = SERIES_BASE.copy()
-SERIES_IMAGE_VIEW["label"] = "Image"
+SERIES_FRAME_READ = _SERIES_BASE.copy()
+SERIES_FRAME_READ["label"] = "Frame Read"
+SERIES_FRAME_READ["stroke"] = "darkgray"
+
+SERIES_FRAME_SKIP = _SERIES_BASE.copy()
+SERIES_FRAME_SKIP["label"] = "Frame Skip"
+SERIES_FRAME_SKIP["stroke"] = "lightgray"
+
+SERIES_IMAGE_VIEW = _SERIES_BASE.copy()
+SERIES_IMAGE_VIEW["label"] = "Image View"
 SERIES_IMAGE_VIEW["stroke"] = "gray"
 
-SERIES_LANDMARKS = SERIES_BASE.copy()
-SERIES_LANDMARKS["label"] = "Landmark"
+SERIES_LANDMARKS = _SERIES_BASE.copy()
+SERIES_LANDMARKS["label"] = "Landmarks"
 SERIES_LANDMARKS["stroke"] = "yellow"
 
-SERIES_DENSE_POINTS = SERIES_BASE.copy()
+SERIES_DENSE_POINTS = _SERIES_BASE.copy()
 SERIES_DENSE_POINTS["label"] = "Dense Points"
 SERIES_DENSE_POINTS["stroke"] = "teal"
 
-SERIES_KEYFRAME_GRAPH = SERIES_BASE.copy()
+SERIES_KEYFRAME_GRAPH = _SERIES_BASE.copy()
 SERIES_KEYFRAME_GRAPH["label"] = "Keyframe Graph"
 SERIES_KEYFRAME_GRAPH["stroke"] = "orange"
 
-SERIES_TRAJECTORY = SERIES_BASE.copy()
+SERIES_TRAJECTORY = _SERIES_BASE.copy()
 SERIES_TRAJECTORY["label"] = "Trajectory"
 SERIES_TRAJECTORY["stroke"] = "green"
 
-SERIES_VISUALIZATION = SERIES_BASE.copy()
+SERIES_VISUALIZATION = _SERIES_BASE.copy()
 SERIES_VISUALIZATION["label"] = "Visualization"
 SERIES_VISUALIZATION["stroke"] = "blue"
 
-SERIES_TRACKING = SERIES_BASE.copy()
+SERIES_TRACKING = _SERIES_BASE.copy()
 SERIES_TRACKING["label"] = "Tracking"
 SERIES_TRACKING["stroke"] = "red"
 
-SERIES_PROCESSING = SERIES_BASE.copy()
+SERIES_PROCESSING = _SERIES_BASE.copy()
 SERIES_PROCESSING["label"] = "Processing Time"
 SERIES_PROCESSING["stroke"] = "purple"
 
-SERIES_RT_DEADLINE = SERIES_BASE.copy()
+SERIES_RT_DEADLINE = _SERIES_BASE.copy()
 SERIES_RT_DEADLINE["label"] = "Real-Time Deadline"
 SERIES_RT_DEADLINE["stroke"] = "red"
 SERIES_RT_DEADLINE["dash"] = (5,5)
+
+RUNTIME_SERIES = (
+    SERIES_TIME,
+    SERIES_PROCESSING,
+    SERIES_TRACKING,
+    SERIES_VISUALIZATION,
+    SERIES_FRAME_READ,
+    SERIES_FRAME_SKIP,
+    SERIES_IMAGE_VIEW,
+    SERIES_LANDMARKS,
+    SERIES_DENSE_POINTS,
+    SERIES_KEYFRAME_GRAPH,
+    SERIES_TRAJECTORY,
+    SERIES_RT_DEADLINE,
+)
+
+
+# Colored Logging
+_SPDLOG_LEVEL_TO_PY = {
+    "trace": logging.DEBUG,
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+    "off": logging.CRITICAL,
+}
+
+_LOG_LEVEL_COLOR = {
+    logging.DEBUG:    "\033[36m",          # cyan
+    logging.INFO:     "\033[32m",          # green
+    logging.WARNING:  "\033[33m\033[1m",   # yellow bold
+    logging.ERROR:    "\033[31m\033[1m",   # red bold
+    logging.CRITICAL: "\033[1m\033[41m",   # bold on red
+}
+
+class TqdmLoggingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+class ColorFormatter(logging.Formatter):
+    def format(self, record):
+        color = _LOG_LEVEL_COLOR.get(record.levelno, "")
+        name = record.levelname
+        if color:
+            record.levelname = f"{color}{name.lower()}\033[0m"
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = name
+
+def setup_logger(log_level: str) -> logging.Logger:
+    log = logging.getLogger("stella_vslam")
+    if not log.hasHandlers():
+        handler = TqdmLoggingHandler()
+        handler.setFormatter(ColorFormatter(
+            fmt="[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        log.addHandler(handler)
+    log.setLevel(_SPDLOG_LEVEL_TO_PY[log_level.lower()])
+    log.propagate = False
+    return log
