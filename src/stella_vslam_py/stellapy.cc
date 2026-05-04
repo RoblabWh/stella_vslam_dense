@@ -2,8 +2,12 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
+#include <pybind11/functional.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <spdlog/sinks/base_sink.h>
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include "stella_vslam/system.h"
 #include "stella_vslam/config.h"
 #include "stella_vslam/publish/frame_publisher.h"
@@ -22,6 +26,67 @@ using PyPose = std::tuple<ndarray<float>, ndarray<float>>; // position, orientat
 
 namespace stella_vslam {
 
+using logging_callback_t = std::function<void(const std::string&)>;
+
+class python_callback_sink_mt : public spdlog::sinks::base_sink<std::mutex> {
+public:
+    python_callback_sink_mt(logging_callback_t&& callback, bool color)
+        : callback_(std::move(callback)), color_(color) {}
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override {
+        fmt::memory_buffer formatted;
+        formatter_->format(msg, formatted);
+
+        std::string out;
+        std::string_view view(formatted.data(), formatted.size());
+        if (!view.empty() && view.back() == '\n') {
+            view.remove_suffix(1);
+        }
+        if (color_ && msg.color_range_end > msg.color_range_start) {
+            out = fmt::format("{}{}{}\033[0m{}",
+                              view.substr(0, msg.color_range_start),
+                              level_color(msg.level),
+                              view.substr(msg.color_range_start, msg.color_range_end - msg.color_range_start),
+                              view.substr(msg.color_range_end));
+        }
+        else {
+            out.assign(view);
+        }
+
+        py::gil_scoped_acquire acquire;
+        try {
+            callback_(out);
+        }
+        catch (py::error_already_set& e) {
+            std::fprintf(stderr, "[stella_vslam] log callback raised: %s\n", e.what());
+        }
+    }
+
+    void flush_() override {}
+
+private:
+    logging_callback_t callback_;
+    bool color_;
+
+    static constexpr std::array<const char*, 7> level_color_ = {
+        "\033[37m",        // trace    - white
+        "\033[36m",        // debug    - cyan
+        "\033[32m",        // info     - green
+        "\033[33m\033[1m", // warn     - yellow bold
+        "\033[31m\033[1m", // error    - red bold
+        "\033[1m\033[41m", // critical - bold on red
+        "",                // off
+    };
+
+    static std::string_view level_color(spdlog::level::level_enum level) {
+        const auto i = static_cast<size_t>(level);
+        return i < level_color_.size()
+                   ? std::string_view{level_color_[i]}
+                   : std::string_view{};
+    }
+};
+
 class StellaVSLAM {
 public:
     StellaVSLAM(const std::string& config_file_path, const std::string& vocab_file_path, const std::string& log_level = "info") {
@@ -33,12 +98,17 @@ public:
         map_publisher_ = system_->get_map_publisher();
     }
 
+    ~StellaVSLAM() {
+        set_log_callback(std::nullopt, true);
+    }
+
     // System API
 
     void startup(bool need_initialize = true) {
         system_->startup(need_initialize);
     }
     void shutdown() {
+        py::gil_scoped_release release;
         system_->shutdown();
     }
     void pause() {
@@ -293,6 +363,14 @@ public:
         return {np_keyframe_pose, np_spanning_tree_edges, np_loop_edges, np_covisibility_edges};
     }
 
+    static void set_log_callback(std::optional<logging_callback_t> callback, bool color) {
+        auto sink = callback
+                                    ? spdlog::sink_ptr{std::make_shared<python_callback_sink_mt>(std::move(*callback), color)}
+                                : color ? spdlog::sink_ptr{std::make_shared<spdlog::sinks::stderr_color_sink_mt>()}
+                                        : spdlog::sink_ptr{std::make_shared<spdlog::sinks::stderr_sink_mt>()};
+        system::get_logger()->sinks() = {std::move(sink)};
+    }
+
 private:
     std::unique_ptr<system> system_;
     std::shared_ptr<publish::frame_publisher> frame_publisher_;
@@ -432,5 +510,7 @@ PYBIND11_MODULE(stellapy, m) {
         .def("draw_frame", &stella_vslam::StellaVSLAM::draw_frame)
         .def("get_all_landmarks", &stella_vslam::StellaVSLAM::get_all_landmarks)
         .def("get_dense_points", &stella_vslam::StellaVSLAM::get_dense_points)
-        .def("get_keyframe_graph", &stella_vslam::StellaVSLAM::get_keyframe_graph, py::arg("min_shared_lms") = 100);
+        .def("get_keyframe_graph", &stella_vslam::StellaVSLAM::get_keyframe_graph, py::arg("min_shared_lms") = 100)
+
+        .def_static("set_log_callback", &stella_vslam::StellaVSLAM::set_log_callback, py::arg("callback"), py::arg("color") = true);
 }

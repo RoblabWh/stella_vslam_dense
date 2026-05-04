@@ -131,6 +131,7 @@ def main():
 
     ## Bringup SLAM
     slam = StellaVSLAM(args.config, args.vocab, args.log_level)
+    slam.set_log_callback(tqdm.write)
     slam.startup(not args.map_db_in)
     if args.map_db_in:
         slam.load_map_database(args.map_db_in)
