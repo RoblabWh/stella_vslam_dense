@@ -11,6 +11,7 @@ from tqdm import tqdm
 from viser import ViserServer
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, wait
+from signal import signal, SIGINT, SIG_DFL
 
 def main():
     ## Parse arguments
@@ -177,6 +178,13 @@ def main():
             nonlocal stepping
             stepping = True
         step.on_click(step_once)
+
+    # Setup signal handler for clean shutdown on Ctrl+C
+    def sigint_handler(sig, frame):
+        logger.info("SIGINT received, requesting SLAM termination...")
+        slam.terminate()
+        signal(SIGINT, SIG_DFL)
+    signal(SIGINT, sigint_handler)
 
 
     # Constant variables
