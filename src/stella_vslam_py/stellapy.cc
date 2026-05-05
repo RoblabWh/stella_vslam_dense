@@ -366,8 +366,8 @@ public:
     static void set_log_callback(std::optional<logging_callback_t> callback, bool color) {
         auto sink = callback
                                     ? spdlog::sink_ptr{std::make_shared<python_callback_sink_mt>(std::move(*callback), color)}
-                                : color ? spdlog::sink_ptr{std::make_shared<spdlog::sinks::stderr_color_sink_mt>()}
-                                        : spdlog::sink_ptr{std::make_shared<spdlog::sinks::stderr_sink_mt>()};
+                                : color ? spdlog::sink_ptr{std::make_shared<spdlog::sinks::stdout_color_sink_mt>()}
+                                        : spdlog::sink_ptr{std::make_shared<spdlog::sinks::stdout_sink_mt>()};
         system::get_logger()->sinks() = {std::move(sink)};
     }
 

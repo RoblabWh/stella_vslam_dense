@@ -1,3 +1,5 @@
+import os
+import sys
 import logging
 from tqdm import tqdm
 from viser import uplot
@@ -84,13 +86,13 @@ RUNTIME_SERIES = (
 
 # Colored Logging
 _SPDLOG_LEVEL_TO_PY = {
-    "trace": logging.DEBUG,
+    "trace": logging.NOTSET,
     "debug": logging.DEBUG,
     "info": logging.INFO,
     "warning": logging.WARNING,
     "error": logging.ERROR,
     "critical": logging.CRITICAL,
-    "off": logging.CRITICAL,
+    "off": logging.CRITICAL + 10,
 }
 
 _LOG_LEVEL_COLOR = {
@@ -101,6 +103,23 @@ _LOG_LEVEL_COLOR = {
     logging.CRITICAL: "\033[1m\033[41m",   # bold on red
 }
 
+_TERMS_WITH_COLOR = (
+    "ansi",
+    "color",
+    "console",
+    "cygwin",
+    "gnome",
+    "konsole",
+    "kterm",
+    "linux",
+    "msys",
+    "putty",
+    "rxvt",
+    "screen",
+    "vt100",
+    "xterm",
+)
+
 class TqdmLoggingHandler(logging.Handler):
     def emit(self, record):
         try:
@@ -108,25 +127,37 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-class ColorFormatter(logging.Formatter):
+class SpdLogFormatter(logging.Formatter):
+    def __init__(self):
+        super().__init__(
+            fmt="[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        self.color = has_color_support()
+
     def format(self, record):
-        color = _LOG_LEVEL_COLOR.get(record.levelno, "")
-        name = record.levelname
-        if color:
-            record.levelname = f"{color}{name.lower()}\033[0m"
+        color_code = _LOG_LEVEL_COLOR.get(record.levelno)
+        initial_name = record.levelname
+        record.levelname = initial_name.lower()
+        if self.color and color_code is not None:
+            record.levelname = f"{color_code}{record.levelname}\033[0m"
         try:
             return super().format(record)
         finally:
-            record.levelname = name
+            record.levelname = initial_name
+
+def has_color_support(file=None) -> bool:
+    fp = file if file is not None else sys.stdout
+    if not hasattr(fp, "isatty") or not fp.isatty():
+        return False
+    term = os.environ.get("TERM", "")
+    return any(t in term for t in _TERMS_WITH_COLOR)
 
 def setup_logger(log_level: str) -> logging.Logger:
     log = logging.getLogger("stella_vslam")
     if not log.hasHandlers():
         handler = TqdmLoggingHandler()
-        handler.setFormatter(ColorFormatter(
-            fmt="[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        handler.setFormatter(SpdLogFormatter())
         log.addHandler(handler)
     log.setLevel(_SPDLOG_LEVEL_TO_PY[log_level.lower()])
     log.propagate = False
