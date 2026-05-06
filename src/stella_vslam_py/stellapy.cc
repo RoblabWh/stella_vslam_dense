@@ -54,7 +54,6 @@ protected:
             out.assign(view);
         }
 
-        py::gil_scoped_acquire acquire;
         try {
             callback_(out);
         }
@@ -105,6 +104,7 @@ public:
     // System API
 
     void startup(bool need_initialize = true) {
+        py::gil_scoped_release release;
         system_->startup(need_initialize);
     }
     void shutdown() {
@@ -112,95 +112,125 @@ public:
         system_->shutdown();
     }
     void pause() {
+        py::gil_scoped_release release;
         system_->pause_tracker();
     }
     bool is_paused() const {
+        py::gil_scoped_release release;
         return system_->tracker_is_paused();
     }
     void unpause() {
+        py::gil_scoped_release release;
         system_->resume_tracker();
     }
     void reset() {
+        py::gil_scoped_release release;
         system_->request_reset();
     }
     bool reset_is_requested() const {
+        py::gil_scoped_release release;
         return system_->reset_is_requested();
     }
     void terminate() {
+        py::gil_scoped_release release;
         system_->request_terminate();
     }
     bool terminate_is_requested() const {
+        py::gil_scoped_release release;
         return system_->terminate_is_requested();
     }
 
     void enable_mapping() {
+        py::gil_scoped_release release;
         system_->enable_mapping_module();
     }
     void disable_mapping() {
+        py::gil_scoped_release release;
         system_->disable_mapping_module();
     }
     bool mapping_is_enabled() const {
+        py::gil_scoped_release release;
         return system_->mapping_module_is_enabled();
     }
     void enable_temporal_mapping() {
+        py::gil_scoped_release release;
         system_->enable_temporal_mapping();
     }
     void enable_dense_reconstruction() {
+        py::gil_scoped_release release;
         system_->enable_dense_module();
     }
     void disable_dense_reconstruction() {
+        py::gil_scoped_release release;
         system_->disable_dense_module();
     }
     bool dense_reconstruction_is_enabled() const {
+        py::gil_scoped_release release;
         return system_->dense_module_is_enabled();
     }
     bool dense_reconstruction_is_available() const {
+        py::gil_scoped_release release;
         return system_->dense_module_is_available();
     }
     void enable_loop_detection() {
+        py::gil_scoped_release release;
         system_->enable_loop_detector();
     }
     void disable_loop_detection() {
+        py::gil_scoped_release release;
         system_->disable_loop_detector();
     }
     bool loop_detection_is_enabled() const {
+        py::gil_scoped_release release;
         return system_->loop_detector_is_enabled();
     }
     bool loop_ba_is_running() const {
+        py::gil_scoped_release release;
         return system_->loop_BA_is_running();
     }
     void request_loop_closure(int keyfrm1_id, int keyfrm2_id) {
+        py::gil_scoped_release release;
         system_->request_loop_closure(keyfrm1_id, keyfrm2_id);
     }
 
     bool load_map_database(const std::string& path) {
+        py::gil_scoped_release release;
         return system_->load_map_database(path);
     }
     bool save_map_database(const std::string& path) {
+        py::gil_scoped_release release;
         return system_->save_map_database(path);
     }
     bool save_point_cloud(const std::string& path, std::optional<bool> dense) {
+        py::gil_scoped_release release;
         return system_->save_point_cloud(path, dense);
     }
     bool save_keyframes(const std::string& path) {
+        py::gil_scoped_release release;
         return system_->save_keyframes(path);
     }
     void save_frame_trajectory(const std::string& path, const std::string& format) {
+        py::gil_scoped_release release;
         system_->save_frame_trajectory(path, format);
     }
     void save_keyframe_trajectory(const std::string& path, const std::string& format) {
+        py::gil_scoped_release release;
         system_->save_keyframe_trajectory(path, format);
     }
 
     bool relocalize_by_pose(const PyPose& cam_pose_wc) {
-        return system_->relocalize_by_pose(tuple_to_homogeneous(cam_pose_wc));
+        const auto cam_pose = tuple_to_homogeneous(cam_pose_wc);
+        py::gil_scoped_release release;
+        return system_->relocalize_by_pose(cam_pose);
     }
     bool relocalize_by_pose_2d(const PyPose& cam_pose_wc, const ndarray<float>& normal_vector) {
         if (normal_vector.size() != 3) {
             throw std::invalid_argument("normal_vector must have exactly 3 elements");
         }
-        const auto normal_vec = Eigen::Map<const Eigen::Vector3f, Eigen::Unaligned>(normal_vector.data()).cast<double>();
-        return system_->relocalize_by_pose_2d(tuple_to_homogeneous(cam_pose_wc), normal_vec);
+        const auto cam_pose = tuple_to_homogeneous(cam_pose_wc);
+        const auto normal_vec = Eigen::Map<const Eigen::Vector3f, Eigen::Unaligned>(normal_vector.data()).cast<double>().eval();
+        py::gil_scoped_release release;
+        return system_->relocalize_by_pose_2d(cam_pose, normal_vec);
     }
 
     std::optional<PyPose> feed_monocular_frame(PyImage img, double timestamp, PyImage mask = PyImage()) {
