@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG CUDA=12.9.1
 ARG UBUNTU=24.04
 FROM nvidia/cuda:${CUDA}-devel-ubuntu${UBUNTU} AS base
